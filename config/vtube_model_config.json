@@ -1,0 +1,16 @@
+{
+    "neutral": "Neutral",
+    "happy": "Happy",
+    "sad": "Sad",
+    "angry": "Angry",
+    "embarrassed": "Embarrassed",
+    "excited": "Excited",
+    "thinking": "Thinking",
+    "sleepy": "Sleepy",
+    "worried": "Worried",
+    "parameters": {
+        "MouthOpen": "MouthOpen",
+        "EyeOpen": "EyeOpenLeft",
+        "BreathParam": "FaceAngleZ"
+    }
+}
