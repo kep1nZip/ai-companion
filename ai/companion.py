@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from google.genai import types
 from google.genai.errors import ClientError
 
@@ -12,6 +14,8 @@ from ai.context_builder import ContextBuilder
 from database.memory_manager import MemoryManager, Memory
 from behavior.behavior_engine import BehaviorEngine
 from behavior.behavior_state import BehaviorState, DEFAULT_BEHAVIOR_STATE
+from vision.vision import Vision
+from vision.vision_context import VisionContext
 from config.settings import GEMINI_API_KEY
 from config.constants import MODEL_NAME
 from config.logger import logger
@@ -33,11 +37,11 @@ def _format_memories(memories: list[Memory]) -> str:
 
 
 class Companion:
-    """Backend inti, UI-independent. Mengoordinasikan Conversation, Memory, dan
-    (BARU v0.6.5) Behavior Engine — Companion cuma ORCHESTRATE, tidak pernah
-    memiliki logic Behavior maupun merangkai string context sendiri."""
+    """Backend inti, UI-independent. Mengoordinasikan Conversation, Memory,
+    Behavior Engine, dan (BARU v0.7) Vision — SEMUA opsional/read-only dari sisi
+    Companion, Companion tetap cuma orchestrator."""
 
-    def __init__(self):
+    def __init__(self, vision: Optional[Vision] = None):
         prompts = load_prompts()
         system_prompt = build_system_prompt(prompts)
 
@@ -52,6 +56,7 @@ class Companion:
 
         self._behavior_engine = BehaviorEngine(memory_manager=self._memory_manager)
         self._context_builder = ContextBuilder()
+        self._vision = vision
 
         logger.info("Companion backend initialized. Model: {}", MODEL_NAME)
 
@@ -60,7 +65,8 @@ class Companion:
         logger.info("Teacher: {}", user_input)
 
         behavior_state = self._update_behavior(user_input)
-        contents = self._build_contents(behavior_state)
+        vision_context = self._vision.get_context() if self._vision else None  # reuse ONLY, tidak capture baru
+        contents = self._build_contents(behavior_state, vision_context)
 
         try:
             logger.info("Gemini Request")
@@ -109,20 +115,29 @@ class Companion:
     def clear_memories(self) -> None:
         self._memory_manager.clear_all()
 
-    # ---------- Behavior (BARU v0.6.5) ----------
+    # ---------- Behavior ----------
 
     def current_behavior_state(self) -> BehaviorState:
-        """Public read-only API. GUI/pihak luar HARUS lewat sini untuk baca
-        BehaviorState — TIDAK PERNAH mengakses BehaviorEngine langsung."""
         return self._behavior_engine.current
+
+    # ---------- Vision (BARU v0.7) ----------
+
+    def capture_vision(self) -> Optional[VisionContext]:
+        """Trigger MANUAL eksplisit (mis. tombol GUI masa depan) — TIDAK PERNAH
+        dipanggil otomatis dari chat() (Capture Policy: Manual Capture Only).
+        Return None kalau Vision tidak diaktifkan (opsional, rekomendasi GPT #4)."""
+        if self._vision is None:
+            return None
+        return self._vision.refresh()
+
+    def current_vision_context(self) -> Optional[VisionContext]:
+        if self._vision is None:
+            return None
+        return self._vision.get_context()
 
     # ---------- Internal ----------
 
     def _update_behavior(self, user_input: str) -> BehaviorState:
-        """Dipanggil SEBELUM Gemini membalas (Core Philosophy spec v0.6.5) — reply
-        belum tersedia di titik ini. Dipassing string kosong karena tidak ada
-        subsystem behavior (Emotion/Relationship/Internal State) yang membaca
-        argumen `reply` saat ini (dikonfirmasi dari implementasi v0.6.2-v0.6.4)."""
         try:
             state = self._behavior_engine.update(user_input, "")
             logger.info("Behavior Updated")
@@ -131,21 +146,21 @@ class Companion:
             logger.warning("Behavior Engine gagal, fallback ke default: {}", e)
             return DEFAULT_BEHAVIOR_STATE
 
-    def _build_contents(self, behavior_state: BehaviorState) -> list[types.Content]:
-        """Gabungkan ephemeral context (waktu+behavior, dari ContextBuilder) +
-        memori (ephemeral) + history asli. TIDAK PERNAH disimpan permanen."""
+    def _build_contents(
+        self, behavior_state: BehaviorState, vision_context: Optional[VisionContext] = None
+    ) -> list[types.Content]:
         history = self._conversation.get_history()
         contents: list[types.Content] = []
 
         try:
-            ephemeral_text = self._context_builder.build(behavior_state)
+            ephemeral_text = self._context_builder.build(behavior_state, vision_context=vision_context)
             contents.append(
                 types.Content(
                     role="user",
                     parts=[types.Part(text=f"[Ephemeral runtime context — bukan pesan Teacher]\n{ephemeral_text}")],
                 )
             )
-            logger.info("Ephemeral Context Generated")
+            logger.info("Context Generated")
         except Exception as e:
             logger.warning("Gagal membangun ephemeral context, lanjut tanpa itu: {}", e)
 

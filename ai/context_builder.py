@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from behavior.behavior_state import BehaviorState
+from vision.vision_context import VisionContext
 
 _HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN = [
@@ -13,28 +15,24 @@ _BULAN = [
 
 
 class ContextBuilder:
-    """SATU-SATUNYA modul yang merangkai teks Ephemeral Context dari BehaviorState
-    (+ waktu real-time). Companion TIDAK boleh merangkai string context sendiri —
-    ini Context Builder Separation Policy (rekomendasi GPT, v0.6.5).
-
-    TIDAK PERNAH memanggil Gemini. TIDAK PERNAH akses SQLite. TIDAK PERNAH import Qt.
-    Hasil build() TIDAK PERNAH disimpan permanen (bukan prompt file, bukan memory) —
-    dibangun ulang setiap request, sesuai Ephemeral Context Injection Policy.
-
-    Kalau nanti v0.7 (Vision) atau v0.8 (Routine System) perlu menambah sumber
-    informasi ke context, cukup tambah method _format_xxx() di sini dan panggil
-    dari build() — Companion tidak perlu diubah sama sekali."""
+    """SATU-SATUNYA modul yang merangkai teks Ephemeral Context. Sekarang
+    menggabungkan Behavior Context + Vision Context (OPSIONAL — rekomendasi GPT
+    #4: pipeline harus tetap jalan normal walau Vision mati)."""
 
     def __init__(self, timezone_name: str = "Asia/Jakarta"):
         self._timezone_name = timezone_name
 
-    def build(self, behavior_state: BehaviorState) -> str:
+    def build(self, behavior_state: BehaviorState, vision_context: Optional[VisionContext] = None) -> str:
         sections = [
             self._format_time(),
             self._format_emotion(behavior_state),
             self._format_relationship(behavior_state),
             self._format_internal(behavior_state),
         ]
+
+        if vision_context is not None:
+            sections.append(self._format_vision(vision_context))
+
         return "\n\n".join(s for s in sections if s)
 
     def _format_time(self) -> str:
@@ -66,4 +64,13 @@ class ContextBuilder:
             f"Energy: {i.energy.value}\n"
             f"Curiosity: {i.curiosity.level}\n"
             f"Initiative: {i.initiative.level}"
+        )
+
+    def _format_vision(self, vc: VisionContext) -> str:
+        app_line = f"Active Application: {vc.application}\n" if vc.application else ""
+        return (
+            "Visual Context\n"
+            f"{app_line}{vc.summary}\n\n"
+            f"Captured\n{vc.timestamp.strftime('%H:%M:%S')}\n"
+            f"Age\n{int(vc.age_seconds())} seconds"
         )

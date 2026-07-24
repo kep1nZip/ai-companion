@@ -3,11 +3,16 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from ai.companion import Companion
+from config.settings import GEMINI_API_KEY
 from ui.window import MainWindow
 from ui.theme import DARK_STYLESHEET
 from config.constants import APP_NAME, VERSION, MODEL_NAME
 from config.logger import logger
 
+from vision.vision import Vision
+from vision.screen_capture import MssScreenCapture
+from vision.image_analyzer import ImageAnalyzer
+from config.constants import VISION_MODEL_NAME, VISION_DEFAULT_TTL
 
 def main() -> None:
     logger.info("GUI application starting. {} v{}", APP_NAME, VERSION)
@@ -15,7 +20,13 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setStyleSheet(DARK_STYLESHEET)
 
-    companion = Companion()
+    vision = Vision(
+        screen_capture=MssScreenCapture(),
+        image_analyzer=ImageAnalyzer(api_key=GEMINI_API_KEY, model_name=VISION_MODEL_NAME),
+        default_ttl=VISION_DEFAULT_TTL,
+    )
+    companion = Companion(vision=vision)
+
     logger.info("Companion backend ready. Model: {}", MODEL_NAME)
 
     window = MainWindow(companion)
