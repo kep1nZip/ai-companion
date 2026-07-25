@@ -1,0 +1,11 @@
+from ai.companion import Companion
+from vision.vision import Vision
+from vision.screen_capture import MssScreenCapture
+from vision.image_analyzer import ImageAnalyzer
+from config.settings import GEMINI_API_KEY
+from config.constants import VISION_MODEL_NAME, VISION_DEFAULT_TTL
+
+vision = Vision(MssScreenCapture(), ImageAnalyzer(GEMINI_API_KEY, VISION_MODEL_NAME), VISION_DEFAULT_TTL)
+companion = Companion(vision=vision)
+context = companion.capture_vision()
+print(context)

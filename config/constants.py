@@ -1,5 +1,5 @@
 APP_NAME = "Arona"
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 MODEL_NAME = "gemini-2.5-flash"
 TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
 TTS_VOICE_NAME = "Zephyr"
@@ -31,3 +31,5 @@ IDLE_BREATHING_AMPLITUDE = 0.5
 
 VISION_MODEL_NAME = "gemini-2.5-flash"
 VISION_DEFAULT_TTL = 30.0
+
+ROUTINE_TIMEZONE = "Asia/Jakarta"

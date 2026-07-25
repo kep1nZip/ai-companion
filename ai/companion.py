@@ -20,6 +20,8 @@ from config.settings import GEMINI_API_KEY
 from config.constants import MODEL_NAME
 from config.logger import logger
 
+from routine.routine import Routine
+from routine.routine_event import RoutineEvent
 
 class RateLimitError(Exception):
     """Terjadi saat Gemini API membalas rate limit (429)."""
@@ -41,7 +43,7 @@ class Companion:
     Behavior Engine, dan (BARU v0.7) Vision — SEMUA opsional/read-only dari sisi
     Companion, Companion tetap cuma orchestrator."""
 
-    def __init__(self, vision: Optional[Vision] = None):
+    def __init__(self, vision: Optional[Vision] = None, enable_routine: bool = True):
         prompts = load_prompts()
         system_prompt = build_system_prompt(prompts)
 
@@ -57,6 +59,7 @@ class Companion:
         self._behavior_engine = BehaviorEngine(memory_manager=self._memory_manager)
         self._context_builder = ContextBuilder()
         self._vision = vision
+        self._routine = Routine(memory_manager=self._memory_manager) if enable_routine else None
 
         logger.info("Companion backend initialized. Model: {}", MODEL_NAME)
 
@@ -66,7 +69,9 @@ class Companion:
 
         behavior_state = self._update_behavior(user_input)
         vision_context = self._vision.get_context() if self._vision else None  # reuse ONLY, tidak capture baru
-        contents = self._build_contents(behavior_state, vision_context)
+        routine_event = self._routine.update(behavior_state, vision_context) if self._routine else None
+
+        contents = self._build_contents(behavior_state, vision_context, routine_event)
 
         try:
             logger.info("Gemini Request")
@@ -74,6 +79,9 @@ class Companion:
             self._conversation.add_assistant_message(reply)
             logger.info("Gemini Reply")
             logger.info("Arona: {}", reply)
+
+            if routine_event and self._routine:
+                self._routine.mark_completed(routine_event)
 
         except GeminiResponseError as e:
             self._conversation.rollback_last_message()
@@ -84,11 +92,9 @@ class Companion:
 
         except ClientError as e:
             self._conversation.rollback_last_message()
-
             if "429" in str(e):
                 logger.warning("Rate limit hit: {}", e)
                 raise RateLimitError(str(e)) from e
-
             logger.error("Gemini ClientError: {}", e)
             raise CompanionError(str(e)) from e
 
@@ -191,3 +197,47 @@ class Companion:
                 self._memory_manager.save_memory(fact["category"], fact["content"])
         except Exception as e:
             logger.warning("Pipeline memori gagal, percakapan tetap lanjut: {}", e)
+
+    # ---------- Routine (BARU v0.8, Developer Panel prep) ----------
+
+    def get_pending_routine_events(self) -> list:
+        return self._routine.get_pending_events() if self._routine else []
+
+    def get_last_routine_event(self) -> Optional[object]:
+        return self._routine.get_last_event() if self._routine else None
+
+    def get_next_routine_schedule(self) -> dict:
+        return self._routine.get_next_schedule() if self._routine else {}
+
+    def clear_routine_queue(self) -> None:
+        if self._routine:
+            self._routine.clear_queue()
+
+    def _build_contents(self, behavior_state, vision_context=None, routine_event=None) -> list[types.Content]:
+        history = self._conversation.get_history()
+        contents: list[types.Content] = []
+
+        try:
+            ephemeral_text = self._context_builder.build(behavior_state, vision_context=vision_context, routine_event=routine_event)
+            contents.append(types.Content(
+                role="user",
+                parts=[types.Part(text=f"[Ephemeral runtime context — bukan pesan Teacher]\n{ephemeral_text}")],
+            ))
+            logger.info("Context Generated")
+        except Exception as e:
+            logger.warning("Gagal membangun ephemeral context, lanjut tanpa itu: {}", e)
+
+        try:
+            memories = self._memory_manager.load_memories(limit=10)
+            memory_text = _format_memories(memories)
+            if memory_text:
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part(text=f"[Konteks memori — bukan pesan langsung dari Teacher]\n{memory_text}")],
+                ))
+        except Exception as e:
+            logger.warning("Gagal memuat memori, lanjut tanpa memori: {}", e)
+
+        contents.extend(history)
+        logger.info("Behavior Injected")
+        return contents

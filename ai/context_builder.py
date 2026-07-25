@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 from behavior.behavior_state import BehaviorState
 from vision.vision_context import VisionContext
 
+from routine.routine_event import RoutineEvent
+
 _HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN = [
     "Januari", "Februari", "Maret", "April", "Mei", "Juni",
@@ -22,7 +24,12 @@ class ContextBuilder:
     def __init__(self, timezone_name: str = "Asia/Jakarta"):
         self._timezone_name = timezone_name
 
-    def build(self, behavior_state: BehaviorState, vision_context: Optional[VisionContext] = None) -> str:
+    def build(
+        self,
+        behavior_state: BehaviorState,
+        vision_context: Optional[VisionContext] = None,
+        routine_event: Optional[RoutineEvent] = None,
+    ) -> str:
         sections = [
             self._format_time(),
             self._format_emotion(behavior_state),
@@ -33,7 +40,13 @@ class ContextBuilder:
         if vision_context is not None:
             sections.append(self._format_vision(vision_context))
 
+        if routine_event is not None:
+            sections.append(self._format_routine(routine_event))
+
         return "\n\n".join(s for s in sections if s)
+
+    def _format_routine(self, event: RoutineEvent) -> str:
+        return f"Routine Suggestion\n{event.payload}"
 
     def _format_time(self) -> str:
         now = datetime.now(ZoneInfo(self._timezone_name))

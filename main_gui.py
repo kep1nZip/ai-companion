@@ -14,6 +14,9 @@ from vision.screen_capture import MssScreenCapture
 from vision.image_analyzer import ImageAnalyzer
 from config.constants import VISION_MODEL_NAME, VISION_DEFAULT_TTL
 
+from routine.routine import Routine
+from config.constants import ROUTINE_TIMEZONE
+
 def main() -> None:
     logger.info("GUI application starting. {} v{}", APP_NAME, VERSION)
 
@@ -25,7 +28,14 @@ def main() -> None:
         image_analyzer=ImageAnalyzer(api_key=GEMINI_API_KEY, model_name=VISION_MODEL_NAME),
         default_ttl=VISION_DEFAULT_TTL,
     )
-    companion = Companion(vision=vision)
+
+    routine = Routine(
+        memory_manager=None
+    )  
+
+    companion = Companion(
+        vision=vision
+    )
 
     logger.info("Companion backend ready. Model: {}", MODEL_NAME)
 
