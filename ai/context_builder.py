@@ -9,6 +9,8 @@ from vision.vision_context import VisionContext
 
 from routine.routine_event import RoutineEvent
 
+from initiative.initiative_decision import DecisionResult
+
 _HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN = [
     "Januari", "Februari", "Maret", "April", "Mei", "Juni",
@@ -29,6 +31,7 @@ class ContextBuilder:
         behavior_state: BehaviorState,
         vision_context: Optional[VisionContext] = None,
         routine_event: Optional[RoutineEvent] = None,
+        decision_result: Optional[DecisionResult] = None,
     ) -> str:
         sections = [
             self._format_time(),
@@ -43,7 +46,18 @@ class ContextBuilder:
         if routine_event is not None:
             sections.append(self._format_routine(routine_event))
 
+        if decision_result is not None and decision_result.should_start:
+            sections.append(self._format_initiative(decision_result))
+
         return "\n\n".join(s for s in sections if s)
+
+    def _format_initiative(self, result: DecisionResult) -> str:
+        reasons_text = "; ".join(result.reasons) if result.reasons else "kondisi mendukung"
+        return (
+            "Initiative Context\n"
+            f"Momen ini cukup mendukung Arona untuk lebih proaktif/hangat dalam percakapan "
+            f"({reasons_text}). Ini cuma peluang — Arona tetap boleh merespons secara natural."
+        )
 
     def _format_routine(self, event: RoutineEvent) -> str:
         return f"Routine Suggestion\n{event.payload}"

@@ -23,6 +23,9 @@ from config.logger import logger
 from routine.routine import Routine
 from routine.routine_event import RoutineEvent
 
+from initiative.initiative import Initiative
+from initiative.initiative_decision import DecisionResult
+
 class RateLimitError(Exception):
     """Terjadi saat Gemini API membalas rate limit (429)."""
 
@@ -43,7 +46,7 @@ class Companion:
     Behavior Engine, dan (BARU v0.7) Vision — SEMUA opsional/read-only dari sisi
     Companion, Companion tetap cuma orchestrator."""
 
-    def __init__(self, vision: Optional[Vision] = None, enable_routine: bool = True):
+    def __init__(self, vision: Optional[Vision] = None, enable_routine: bool = True, enable_initiative: bool = True):
         prompts = load_prompts()
         system_prompt = build_system_prompt(prompts)
 
@@ -60,6 +63,7 @@ class Companion:
         self._context_builder = ContextBuilder()
         self._vision = vision
         self._routine = Routine(memory_manager=self._memory_manager) if enable_routine else None
+        self._initiative = Initiative(memory_manager=self._memory_manager) if enable_initiative else None
 
         logger.info("Companion backend initialized. Model: {}", MODEL_NAME)
 
@@ -68,10 +72,14 @@ class Companion:
         logger.info("Teacher: {}", user_input)
 
         behavior_state = self._update_behavior(user_input)
-        vision_context = self._vision.get_context() if self._vision else None  # reuse ONLY, tidak capture baru
+        vision_context = self._vision.get_context() if self._vision else None
         routine_event = self._routine.update(behavior_state, vision_context) if self._routine else None
+        decision_result = (
+            self._initiative.update(behavior_state, vision_context, routine_event)
+            if self._initiative else None
+        )
 
-        contents = self._build_contents(behavior_state, vision_context, routine_event)
+        contents = self._build_contents(behavior_state, vision_context, routine_event, decision_result)
 
         try:
             logger.info("Gemini Request")
@@ -83,19 +91,16 @@ class Companion:
             if routine_event and self._routine:
                 self._routine.mark_completed(routine_event)
 
+            if decision_result and decision_result.should_start and self._initiative:
+                self._initiative.mark_started()
+
         except GeminiResponseError as e:
             self._conversation.rollback_last_message()
-            logger.warning("Balasan Gemini kosong, pesan Teacher di-rollback: {}", e)
-            raise CompanionError(
-                "Arona kehabisan kata-kata sesaat, Teacher... coba ulangi lagi ya."
-            ) from e
-
+            raise CompanionError("Arona kehabisan kata-kata sesaat, Teacher... coba ulangi lagi ya.") from e
         except ClientError as e:
             self._conversation.rollback_last_message()
             if "429" in str(e):
-                logger.warning("Rate limit hit: {}", e)
                 raise RateLimitError(str(e)) from e
-            logger.error("Gemini ClientError: {}", e)
             raise CompanionError(str(e)) from e
 
         self._remember_if_useful(user_input)
@@ -235,6 +240,67 @@ class Companion:
                     role="user",
                     parts=[types.Part(text=f"[Konteks memori — bukan pesan langsung dari Teacher]\n{memory_text}")],
                 ))
+        except Exception as e:
+            logger.warning("Gagal memuat memori, lanjut tanpa memori: {}", e)
+
+        contents.extend(history)
+        logger.info("Behavior Injected")
+        return contents
+
+    # ---------- Initiative Developer Metrics passthrough (BARU v0.9) ----------
+
+    def get_initiative_score(self) -> float:
+        return self._initiative.get_current_score() if self._initiative else 0.0
+
+    def get_last_initiative_result(self):
+        return self._initiative.get_last_result() if self._initiative else None
+
+    def get_initiative_suppressions(self) -> list[str]:
+        return self._initiative.get_active_suppressions() if self._initiative else []
+
+    def get_initiative_budget(self) -> dict:
+        return self._initiative.get_remaining_budget() if self._initiative else {}
+
+    def get_initiative_cooldowns(self) -> dict:
+        return self._initiative.get_cooldowns() if self._initiative else {}
+
+    def _build_contents(
+        self,
+        behavior_state: BehaviorState,
+        vision_context: Optional[VisionContext] = None,
+        routine_event: Optional[RoutineEvent] = None,
+        decision_result: Optional[DecisionResult] = None,
+    ) -> list[types.Content]:
+        history = self._conversation.get_history()
+        contents: list[types.Content] = []
+
+        try:
+            ephemeral_text = self._context_builder.build(
+                behavior_state,
+                vision_context=vision_context,
+                routine_event=routine_event,
+                decision_result=decision_result,
+            )
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=f"[Ephemeral runtime context — bukan pesan Teacher]\n{ephemeral_text}")],
+                )
+            )
+            logger.info("Context Generated")
+        except Exception as e:
+            logger.warning("Gagal membangun ephemeral context, lanjut tanpa itu: {}", e)
+
+        try:
+            memories = self._memory_manager.load_memories(limit=10)
+            memory_text = _format_memories(memories)
+            if memory_text:
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=f"[Konteks memori — bukan pesan langsung dari Teacher]\n{memory_text}")],
+                    )
+                )
         except Exception as e:
             logger.warning("Gagal memuat memori, lanjut tanpa memori: {}", e)
 
