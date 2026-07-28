@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+import json
+
+from developer.avatar_debug import AvatarSnapshot, build_avatar_snapshot
+from developer.behavior_debug import BehaviorSnapshot, build_behavior_snapshot
+from developer.initiative_debug import InitiativeSnapshot, build_initiative_snapshot
+from developer.log_viewer import LogEntry, read_logs
+from developer.memory_debug import MemorySnapshot, build_memory_snapshot
+from developer.performance_debug import MetricSnapshot, PerformanceTracker
+from developer.routine_debug import RoutineSnapshot, build_routine_snapshot
+from developer.vision_debug import VisionSnapshot, build_vision_snapshot
+from config.constants import LOG_DIR, LOG_FILE
+from config.logger import logger
+
+
+@dataclass(frozen=True)
+class HealthStatus:
+    """System Health (rekomendasi GPT #2)."""
+
+    behavior: bool
+    vision: bool
+    routine: bool
+    initiative: bool
+    memory: bool
+    avatar: bool
+    gemini: bool
+
+
+@dataclass(frozen=True)
+class DeveloperSnapshot:
+    """Facade result (rekomendasi GPT #3) — SATU object gabungan, dibangun sekali
+    oleh get_snapshot(), bukan GUI manggil 8 method satu-satu."""
+
+    behavior: Optional[BehaviorSnapshot]
+    vision: VisionSnapshot
+    routine: Optional[RoutineSnapshot]
+    initiative: Optional[InitiativeSnapshot]
+    memory: Optional[MemorySnapshot]
+    avatar: AvatarSnapshot
+    performance: dict
+    health: HealthStatus
+    timestamp: datetime
+
+
+class DeveloperService:
+    """Public API Developer Tools — Observability Layer (rekomendasi GPT). READ-ONLY
+    MURNI: tidak pernah memanggil method yang memodifikasi state subsystem apa pun
+    (mis. clear_routine_queue(), manual_override(), dsb TIDAK PERNAH dipanggil di sini).
+    Semua data lewat public API Companion, plus AvatarManager/VoiceManager yang
+    di-inject read-only dari ui/ (Avatar Independence Policy: keduanya bukan milik
+    Companion)."""
+
+    def __init__(
+        self,
+        companion,
+        avatar_manager=None,
+        voice_manager=None,
+        performance_tracker: Optional[PerformanceTracker] = None,
+    ):
+        self._companion = companion
+        self._avatar_manager = avatar_manager
+        self._voice_manager = voice_manager
+        self._performance_tracker = performance_tracker or PerformanceTracker()
+
+    # ---------- Public API (sesuai spec) ----------
+
+    def get_behavior(self) -> Optional[BehaviorSnapshot]:
+        try:
+            return build_behavior_snapshot(self._companion.current_behavior_state())
+        except Exception as e:
+            logger.warning("Developer: gagal ambil behavior snapshot: {}", e)
+            return None
+
+    def get_vision(self) -> VisionSnapshot:
+        try:
+            return build_vision_snapshot(self._companion.current_vision_context())
+        except Exception as e:
+            logger.warning("Developer: gagal ambil vision snapshot: {}", e)
+            return build_vision_snapshot(None)
+
+    def get_routine(self) -> Optional[RoutineSnapshot]:
+        try:
+            pending = self._companion.get_pending_routine_events()
+            last = self._companion.get_last_routine_event()
+            schedule = self._companion.get_next_routine_schedule()
+            return build_routine_snapshot(pending, last, schedule)
+        except Exception as e:
+            logger.warning("Developer: gagal ambil routine snapshot: {}", e)
+            return None
+
+    def get_initiative(self) -> Optional[InitiativeSnapshot]:
+        try:
+            last_result = self._companion.get_last_initiative_result()
+            budget = self._companion.get_initiative_budget()
+            cooldowns = self._companion.get_initiative_cooldowns()
+            return build_initiative_snapshot(last_result, budget, cooldowns)
+        except Exception as e:
+            logger.warning("Developer: gagal ambil initiative snapshot: {}", e)
+            return None
+
+    def get_memory(self, limit: int = 50) -> Optional[MemorySnapshot]:
+        try:
+            memories = self._companion.list_memories(limit=limit)
+            return build_memory_snapshot(memories)
+        except Exception as e:
+            logger.warning("Developer: gagal ambil memory snapshot: {}", e)
+            return None
+
+    def get_avatar(self) -> AvatarSnapshot:
+        try:
+            return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
+        except Exception as e:
+            logger.warning("Developer: gagal ambil avatar snapshot: {}", e)
+            return build_avatar_snapshot(None, None)
+
+    def get_performance(self) -> dict:
+        return self._performance_tracker.snapshot()
+
+    def get_logs(self, limit: int = 200, level: Optional[str] = None, search: Optional[str] = None) -> list[LogEntry]:
+        return read_logs(Path(LOG_DIR) / LOG_FILE, limit=limit, level_filter=level, search=search)
+
+    # ---------- System Health (rekomendasi GPT #2) ----------
+
+    def get_health(self) -> HealthStatus:
+        behavior_ok = self.get_behavior() is not None
+        memory_ok = self.get_memory(limit=1) is not None
+        return HealthStatus(
+            behavior=behavior_ok,
+            vision=True,
+            routine=self._companion is not None,
+            initiative=self._companion is not None,
+            memory=memory_ok,
+            avatar=self._avatar_manager is not None,
+            gemini=behavior_ok,
+        )
+
+    # ---------- Facade (rekomendasi GPT #3) ----------
+
+    def get_snapshot(self) -> DeveloperSnapshot:
+        return DeveloperSnapshot(
+            behavior=self.get_behavior(),
+            vision=self.get_vision(),
+            routine=self.get_routine(),
+            initiative=self.get_initiative(),
+            memory=self.get_memory(),
+            avatar=self.get_avatar(),
+            performance=self.get_performance(),
+            health=self.get_health(),
+            timestamp=datetime.now(timezone.utc),
+        )
+
+    # ---------- Export (rekomendasi GPT #4) ----------
+
+    def export_json(self) -> str:
+        return json.dumps(asdict(self.get_snapshot()), indent=2, default=str, ensure_ascii=False)
+
+    def export_markdown(self) -> str:
+        s = self.get_snapshot()
+        lines = [f"# Arona Developer Snapshot — {s.timestamp.isoformat()}", "", "## System Health"]
+        lines += [f"- {k.capitalize()}: {'✓ OK' if v else '✗ DOWN'}" for k, v in asdict(s.health).items()]
+
+        for title, obj in [
+            ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),
+            ("Initiative", s.initiative), ("Memory", s.memory), ("Avatar", s.avatar),
+        ]:
+            if obj is None:
+                continue
+            lines += ["", f"## {title}"] + [f"- {k}: {v}" for k, v in asdict(obj).items()]
+
+        lines += ["", "## Performance"]
+        lines += [
+            f"- {name}: avg={m.avg_ms:.1f}ms min={m.min_ms:.1f}ms max={m.max_ms:.1f}ms count={m.count}"
+            for name, m in s.performance.items()
+        ]
+
+        return "\n".join(lines)

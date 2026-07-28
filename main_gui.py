@@ -17,6 +17,9 @@ from config.constants import VISION_MODEL_NAME, VISION_DEFAULT_TTL
 from routine.routine import Routine
 from config.constants import ROUTINE_TIMEZONE
 
+from developer.performance_debug import PerformanceTracker
+from developer.developer import DeveloperService
+
 def main() -> None:
     logger.info("GUI application starting. {} v{}", APP_NAME, VERSION)
 
@@ -33,13 +36,16 @@ def main() -> None:
         memory_manager=None
     )  
 
+    performance_tracker = PerformanceTracker()
+
     companion = Companion(
-        vision=vision
+        vision=vision,
+        performance_tracker=performance_tracker,
     )
 
     logger.info("Companion backend ready. Model: {}", MODEL_NAME)
 
-    window = MainWindow(companion)
+    window = MainWindow(companion, performance_tracker=performance_tracker)
     window.show()
 
     sys.exit(app.exec())

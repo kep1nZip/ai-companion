@@ -34,12 +34,15 @@ from config.constants import (
 )
 from config.settings import GEMINI_API_KEY
 from config.logger import logger
+from developer.performance_debug import PerformanceTracker
+from developer.developer import DeveloperService
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, companion: Companion):
+    def __init__(self, companion: Companion, performance_tracker: PerformanceTracker):
         super().__init__()
         self._companion = companion
+        self._performance_tracker = performance_tracker
         self._worker: ChatWorker | None = None
         self._voice_worker: VoiceWorker | None = None
         self._speak_worker: SpeakWorker | None = None
@@ -69,6 +72,13 @@ class MainWindow(QMainWindow):
             tts_model_name=TTS_MODEL_NAME,
             voice_name=TTS_VOICE_NAME,
             on_audio_ready=self._avatar_worker.animate_lipsync,
+        )
+
+        self._developer_service = DeveloperService(
+            companion=self._companion,
+            avatar_manager=self._avatar_manager,
+            voice_manager=self._voice_manager,
+            performance_tracker=performance_tracker,
         )
 
         self.setWindowTitle(APP_NAME)

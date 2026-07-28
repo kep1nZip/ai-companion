@@ -1,5 +1,5 @@
 APP_NAME = "Arona"
-VERSION = "0.9.0"
+VERSION = "0.9.5"
 MODEL_NAME = "gemini-2.5-flash"
 TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
 TTS_VOICE_NAME = "Zephyr"
