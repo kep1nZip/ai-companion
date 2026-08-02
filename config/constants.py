@@ -4,6 +4,7 @@ MODEL_NAME = "gemini-2.5-flash"
 TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
 TTS_VOICE_NAME = "Zephyr"
 STT_MODEL_SIZE = "medium"
+EPHEMERAL_CONTEXT_MEMORY_LIMIT = 10
 
 LOG_DIR = "logs"
 LOG_FILE = "app.log"

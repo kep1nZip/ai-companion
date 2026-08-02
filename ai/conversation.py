@@ -1,7 +1,14 @@
+from __future__ import annotations
 from google.genai import types
 
 
 class Conversation:
+    """Riwayat percakapan SEMENTARA (in-memory only) untuk sesi yang sedang
+    berjalan — BUKAN penyimpanan permanen. Sengaja dipisah total dari
+    MemoryManager/SQLite (persistent, jangka panjang); keduanya TIDAK BOLEH
+    digabung (Human-in-the-Loop Memory Policy, v0.3). Menyimpan objek
+    `types.Content` mentah, siap dikirim langsung ke Gemini API tanpa
+    transformasi tambahan."""
 
     def __init__(self):
         self._history: list[types.Content] = []

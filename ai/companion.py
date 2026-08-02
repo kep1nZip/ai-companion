@@ -17,7 +17,7 @@ from behavior.behavior_state import BehaviorState, DEFAULT_BEHAVIOR_STATE
 from vision.vision import Vision
 from vision.vision_context import VisionContext
 from config.settings import GEMINI_API_KEY
-from config.constants import MODEL_NAME
+from config.constants import MODEL_NAME, EPHEMERAL_CONTEXT_MEMORY_LIMIT
 from config.logger import logger
 
 from routine.routine import Routine
@@ -136,7 +136,7 @@ class Companion:
 
     # ---------- Conversation ----------
 
-    def get_history(self) -> list:
+    def get_history(self) -> list[types.Content]:
         return self._conversation.get_history()
 
     def clear_history(self) -> None:
@@ -176,10 +176,10 @@ class Companion:
 
     # ---------- Routine (Developer Panel prep) ----------
 
-    def get_pending_routine_events(self) -> list:
+    def get_pending_routine_events(self) -> list[RoutineEvent]:
         return self._routine.get_pending_events() if self._routine else []
 
-    def get_last_routine_event(self) -> Optional[object]:
+    def get_last_routine_event(self) -> Optional[RoutineEvent]:
         return self._routine.get_last_event() if self._routine else None
 
     def get_next_routine_schedule(self) -> dict:
@@ -194,7 +194,7 @@ class Companion:
     def get_initiative_score(self) -> float:
         return self._initiative.get_current_score() if self._initiative else 0.0
 
-    def get_last_initiative_result(self):
+    def get_last_initiative_result(self) -> Optional[DecisionResult]:
         return self._initiative.get_last_result() if self._initiative else None
 
     def get_initiative_suppressions(self) -> list[str]:
@@ -248,7 +248,7 @@ class Companion:
             logger.warning("Gagal membangun ephemeral context, lanjut tanpa itu: {}", e)
 
         try:
-            memories = self._timed("memory_query", lambda: self._memory_manager.load_memories(limit=10))
+            memories = self._timed("memory_query", lambda: self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT))
             memory_text = _format_memories(memories)
             if memory_text:
                 contents.append(
@@ -261,7 +261,7 @@ class Companion:
             logger.warning("Gagal memuat memori, lanjut tanpa memori: {}", e)
 
         contents.extend(history)
-        logger.info("Behavior Injected")
+        logger.info("Ephemeral Context Injected")
         return contents
 
     def _remember_if_useful(self, user_input: str) -> None:

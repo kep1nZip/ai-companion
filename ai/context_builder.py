@@ -19,9 +19,16 @@ _BULAN = [
 
 
 class ContextBuilder:
-    """SATU-SATUNYA modul yang merangkai teks Ephemeral Context. Sekarang
-    menggabungkan Behavior Context + Vision Context (OPSIONAL — rekomendasi GPT
-    #4: pipeline harus tetap jalan normal walau Vision mati)."""
+    """SATU-SATUNYA modul yang merangkai teks Ephemeral Context. Menggabungkan
+    Behavior + Vision (v0.7) + Routine (v0.8) + Initiative (v0.9) Context —
+    Vision, Routine, dan Initiative semuanya OPSIONAL; pipeline tetap jalan
+    normal walau salah satu (atau semua) mati.
+
+    Routine & Initiative section HARUS ditulis sebagai peluang/saran netral,
+    bukan instruksi yang mendikte kalimat Arona (Routine Decision Policy,
+    Autonomous Permission Policy) — Gemini yang memutuskan bagaimana
+    meresponsnya. Initiative section malah tidak pernah muncul sama sekali
+    kecuali `decision_result.should_start == True`."""
 
     def __init__(self, timezone_name: str = "Asia/Jakarta"):
         self._timezone_name = timezone_name
@@ -50,17 +57,6 @@ class ContextBuilder:
             sections.append(self._format_initiative(decision_result))
 
         return "\n\n".join(s for s in sections if s)
-
-    def _format_initiative(self, result: DecisionResult) -> str:
-        reasons_text = "; ".join(result.reasons) if result.reasons else "kondisi mendukung"
-        return (
-            "Initiative Context\n"
-            f"Momen ini cukup mendukung Arona untuk lebih proaktif/hangat dalam percakapan "
-            f"({reasons_text}). Ini cuma peluang — Arona tetap boleh merespons secara natural."
-        )
-
-    def _format_routine(self, event: RoutineEvent) -> str:
-        return f"Routine Suggestion\n{event.payload}"
 
     def _format_time(self) -> str:
         now = datetime.now(ZoneInfo(self._timezone_name))
@@ -100,4 +96,15 @@ class ContextBuilder:
             f"{app_line}{vc.summary}\n\n"
             f"Captured\n{vc.timestamp.strftime('%H:%M:%S')}\n"
             f"Age\n{int(vc.age_seconds())} seconds"
+        )
+
+    def _format_routine(self, event: RoutineEvent) -> str:
+        return f"Routine Suggestion\n{event.payload}"
+
+    def _format_initiative(self, result: DecisionResult) -> str:
+        reasons_text = "; ".join(result.reasons) if result.reasons else "kondisi mendukung"
+        return (
+            "Initiative Context\n"
+            f"Momen ini cukup mendukung Arona untuk lebih proaktif/hangat dalam percakapan "
+            f"({reasons_text}). Ini cuma peluang — Arona tetap boleh merespons secara natural."
         )

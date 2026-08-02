@@ -7,6 +7,12 @@ from config.logger import logger
 
 
 class CommandResult:
+    """Merepresentasikan hasil eksekusi sebuah command.
+
+    Menyimpan pesan yang akan ditampilkan kepada pengguna beserta
+    informasi apakah command tersebut meminta aplikasi untuk berhenti.
+    """
+
     def __init__(self, message: str, should_exit: bool = False):
         self.message = message
         self.should_exit = should_exit

@@ -12,6 +12,11 @@ class GeminiResponseError(Exception):
 
 
 class GeminiClient:
+    """Mengirim permintaan ke Gemini API dan mengembalikan respons teks.
+    Class ini mengelola konfigurasi model serta menerjemahkan respons
+    kosong dari Gemini menjadi `GeminiResponseError`.
+    """
+        
     def __init__(self, api_key: str, model_name: str, system_prompt: str):
         self._client = genai.Client(api_key=api_key)
         self._model_name = model_name
