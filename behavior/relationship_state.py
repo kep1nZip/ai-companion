@@ -47,9 +47,13 @@ class DimensionValue:
 
 @dataclass(frozen=True)
 class RelationshipState:
-    """Snapshot IMMUTABLE hubungan Arona-Teacher. Beda dengan Emotion (jangka pendek),
-    Relationship PERSISTEN lintas restart aplikasi — lewat RelationshipCoordinator di
-    relationship.py. File ini sendiri TIDAK tahu apa pun soal persistence/MemoryManager."""
+    """Snapshot IMMUTABLE hubungan Arona-Teacher. 
+    
+    Beda dengan Emotion (jangka pendek), Relationship PERSISTEN lintas restart aplikasi — lewat RelationshipCoordinator di
+    relationship.py. File ini sendiri TIDAK tahu apa pun soal persistence/MemoryManager.
+    
+    Field `manual_override` disimpan untuk kebutuhan Developer Panel/GUI di masa depan dan saat ini 
+    belum digunakan oleh runtime."""
 
     trust: DimensionValue = field(default_factory=DimensionValue)
     comfort: DimensionValue = field(default_factory=DimensionValue)
@@ -57,6 +61,10 @@ class RelationshipState:
     respect: DimensionValue = field(default_factory=DimensionValue)
     familiarity: DimensionValue = field(default_factory=DimensionValue)
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Reserved for future Developer Panel/GUI. Runtime saat ini belum
+    # menggunakan field ini, tetapi tetap disimpan agar UI nantinya dapat
+    # membedakan state hasil manual override dari state hasil update otomatis.
     manual_override: bool = False
 
     def elapsed_seconds(self) -> float:

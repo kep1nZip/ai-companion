@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import re
 from typing import Optional
 
+from behavior.text_match import matches_any
 from behavior.relationship_rules import RelationshipDelta, RelationshipTransitionProposal
 from behavior.emotion_state import Emotion, EmotionState
 from database.memory_manager import MemoryManager
@@ -14,10 +14,6 @@ _INSULT_PATTERNS = [r"\bbodoh\b", r"\bjelek\b", r"\bmenyebalkan\b"]
 
 _POSITIVE_EMOTIONS = {Emotion.HAPPY, Emotion.EXCITED, Emotion.PROUD}
 _NEGATIVE_EMOTIONS = {Emotion.SAD, Emotion.WORRIED}
-
-
-def _matches_any(patterns: list[str], text: str) -> bool:
-    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
 class RelationshipAnalyzer:
@@ -33,13 +29,13 @@ class RelationshipAnalyzer:
         try:
             deltas: list[RelationshipDelta] = []
 
-            if _matches_any(_PRAISE_PATTERNS, user_input):
+            if matches_any(_PRAISE_PATTERNS, user_input):
                 deltas.append(RelationshipDelta("affection", 2, "Teacher memuji Arona"))
 
-            if _matches_any(_THANKS_PATTERNS, user_input):
+            if matches_any(_THANKS_PATTERNS, user_input):
                 deltas.append(RelationshipDelta("trust", 1, "Teacher berterima kasih"))
 
-            if _matches_any(_INSULT_PATTERNS, user_input):
+            if matches_any(_INSULT_PATTERNS, user_input):
                 deltas.append(RelationshipDelta("comfort", -2, "Teacher berkata kasar"))
 
             # Interaksi apa pun menambah familiarity sedikit — makin sering ngobrol,

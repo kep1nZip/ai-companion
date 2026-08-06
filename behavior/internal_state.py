@@ -8,13 +8,17 @@ from typing import Optional
 from behavior.mood import Mood, DEFAULT_MOOD
 from behavior.energy import EnergyState, DEFAULT_ENERGY
 from behavior.curiosity import CuriosityState, DEFAULT_CURIOSITY
-from behavior.initiative import InitiativeState, DEFAULT_INITIATIVE
+from behavior.initiative_state import InitiativeState, DEFAULT_INITIATIVE
 from behavior.internal_state_rules import (
     propose_mood, apply_mood, compute_energy_delta,
     compute_curiosity_delta, compute_curiosity_decay, compute_initiative_delta,
 )
 from behavior.internal_state_history import InternalStateHistory
 from behavior.emotion_state import EmotionState
+from behavior.persistence import (
+    save_persistent_state,
+    load_persistent_state,
+)
 from behavior.relationship_state import RelationshipState
 from database.memory_manager import MemoryManager
 from config.logger import logger
@@ -136,7 +140,7 @@ class InternalStateCoordinator:
             logger.warning("InternalStateCoordinator gagal memproses pesan, fallback ke state sebelumnya: {}", e)
             return self._current
 
-    def manual_override(self, component: str, value) -> InternalState:
+    def manual_override(self, component: str, value: str | int) -> InternalState:
         """component: 'mood' (value: str nama Mood, mis. 'cheerful') | 'energy' /
         'curiosity' / 'initiative' (value: int). Automatic update TETAP LANJUT
         setelahnya — kebijakan sama persis dengan Relationship System."""
@@ -183,29 +187,18 @@ class InternalStateCoordinator:
         return self._history.recent(limit)
 
     def save(self) -> None:
-        if self._memory_manager is None:
-            return
-        try:
-            content = _serialize(self._current)
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-            if existing:
-                self._memory_manager.update_memory(existing[0].id, content=content)
-            else:
-                self._memory_manager.save_memory("general", content)
-            logger.info("Persistence Saved")
-        except Exception as e:
-            logger.warning("Gagal menyimpan internal state, akan dicoba lagi nanti: {}", e)
+        save_persistent_state(
+            memory_manager=self._memory_manager,
+            marker=_PERSISTENCE_MARKER,
+            content=_serialize(self._current),
+        )
 
     def load(self) -> None:
-        if self._memory_manager is None:
-            return
-        try:
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-            if not existing:
-                return
-            loaded = _deserialize(existing[0].content)
-            if loaded is not None:
-                self._current = loaded
-                logger.info("Persistence Loaded")
-        except Exception as e:
-            logger.warning("Gagal memuat internal state tersimpan, pakai default: {}", e)
+        loaded = load_persistent_state(
+            memory_manager=self._memory_manager,
+            marker=_PERSISTENCE_MARKER,
+            deserialize=_deserialize,
+        )
+
+        if loaded is not None:
+            self._current = loaded

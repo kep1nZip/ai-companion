@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 from typing import Optional
 
-from behavior.emotion_state import Emotion, EmotionState
 from behavior.emotion_rules import EmotionTransitionProposal
-from database.memory_manager import MemoryManager
+from behavior.emotion_state import Emotion, EmotionState
+from behavior.text_match import matches_any
 from config.logger import logger
+from database.memory_manager import MemoryManager
 
 # Heuristik kata kunci SEDERHANA — BUKAN sentiment analysis berbasis AI/Gemini
 # (dilarang eksplisit di spec). Pattern matching kasar untuk v0.6.2; boleh
@@ -15,10 +15,6 @@ _PRAISE_PATTERNS = [r"\bhebat\b", r"\bkeren\b", r"\bpintar\b", r"\bbagus\b", r"\
 _GOOD_NEWS_PATTERNS = [r"\blulus\b", r"\bpromosi\b", r"\bmenang\b", r"\bberhasil\b", r"\bsukses\b"]
 _BAD_NEWS_PATTERNS = [r"\bsedih\b", r"\bgagal\b", r"\bcapek\b", r"\blelah\b", r"\bkecewa\b", r"\bsakit\b"]
 _SURPRISE_PATTERNS = [r"\btiba-tiba\b", r"\bkaget\b", r"\bwow\b", r"\bwaduh\b"]
-
-
-def _matches_any(patterns: list[str], text: str) -> bool:
-    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
 class EmotionAnalyzer:
@@ -37,19 +33,19 @@ class EmotionAnalyzer:
 
     def analyze(self, user_input: str, current_state: EmotionState) -> EmotionTransitionProposal:
         try:
-            if _matches_any(_PRAISE_PATTERNS, user_input):
+            if matches_any(_PRAISE_PATTERNS, user_input):
                 if current_state.current == Emotion.EMBARRASSED:
                     # Rule dari spec: "Embarrassed -> Happy jika Teacher memuji Arona"
                     return EmotionTransitionProposal(Emotion.HAPPY, 0.7, "dipuji Teacher")
                 return EmotionTransitionProposal(Emotion.EMBARRASSED, 0.6, "dipuji Teacher")
 
-            if _matches_any(_GOOD_NEWS_PATTERNS, user_input):
+            if matches_any(_GOOD_NEWS_PATTERNS, user_input):
                 return EmotionTransitionProposal(Emotion.EXCITED, 0.85, "Teacher berbagi kabar baik")
 
-            if _matches_any(_BAD_NEWS_PATTERNS, user_input):
+            if matches_any(_BAD_NEWS_PATTERNS, user_input):
                 return EmotionTransitionProposal(Emotion.WORRIED, 0.65, "Teacher terlihat kurang baik")
 
-            if _matches_any(_SURPRISE_PATTERNS, user_input):
+            if matches_any(_SURPRISE_PATTERNS, user_input):
                 return EmotionTransitionProposal(Emotion.SURPRISED, 0.6, "sesuatu yang mengejutkan")
 
             return EmotionTransitionProposal(

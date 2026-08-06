@@ -10,6 +10,10 @@ from behavior.relationship_rules import apply_transition, decay
 from behavior.relationship_analyzer import RelationshipAnalyzer
 from behavior.relationship_history import RelationshipHistory
 from behavior.emotion_state import EmotionState
+from behavior.persistence import (
+    save_persistent_state,
+    load_persistent_state,
+)
 from database.memory_manager import MemoryManager
 from config.logger import logger
 
@@ -114,40 +118,18 @@ class RelationshipCoordinator:
         return self._history.recent(limit)
 
     def save(self) -> None:
-        """Upsert manual: cari dulu record lama (search_memory), lalu update_memory
-        kalau ada / save_memory kalau belum ada. Ini menghindari row baru menumpuk
-        tiap kali disimpan (save_memory sendiri cuma dedup exact-match, sementara
-        JSON kita berubah tiap panggilan)."""
-        if self._memory_manager is None:
-            return
-
-        try:
-            content = _serialize(self._current)
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-
-            if existing:
-                self._memory_manager.update_memory(existing[0].id, content=content)
-            else:
-                self._memory_manager.save_memory("general", content)
-
-            logger.info("Persistence Saved")
-
-        except Exception as e:
-            logger.warning("Gagal menyimpan relationship state, akan dicoba lagi nanti: {}", e)
+        save_persistent_state(
+            memory_manager=self._memory_manager,
+            marker=_PERSISTENCE_MARKER,
+            content=_serialize(self._current),
+        )
 
     def load(self) -> None:
-        if self._memory_manager is None:
-            return
+        loaded = load_persistent_state(
+            memory_manager=self._memory_manager,
+            marker=_PERSISTENCE_MARKER,
+            deserialize=_deserialize,
+        )
 
-        try:
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-            if not existing:
-                return
-
-            loaded = _deserialize(existing[0].content)
-            if loaded is not None:
-                self._current = loaded
-                logger.info("Persistence Loaded")
-
-        except Exception as e:
-            logger.warning("Gagal memuat relationship state tersimpan, pakai default: {}", e)
+        if loaded is not None:
+            self._current = loaded
