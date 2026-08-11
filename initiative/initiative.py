@@ -70,9 +70,18 @@ class Initiative:
         self._last_result = result
         return result
 
-    def evaluate(self, *args, **kwargs) -> DecisionResult:
+    def evaluate(
+        self,
+        behavior_state: BehaviorState,
+        vision_context: Optional[VisionContext] = None,
+        routine_event: Optional[RoutineEvent] = None,
+        is_voice_active: bool = False,
+        is_actively_typing: bool = False,
+    ) -> DecisionResult:
         """Alias eksplisit sesuai Public API spec — sama seperti update()."""
-        return self.update(*args, **kwargs)
+        return self.update(
+            behavior_state, vision_context, routine_event, is_voice_active, is_actively_typing,
+        )
 
     def should_start(self) -> bool:
         return self._last_result.should_start if self._last_result else False

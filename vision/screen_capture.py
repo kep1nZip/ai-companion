@@ -25,7 +25,7 @@ class MssScreenCapture(ScreenCapture):
         self._monitor_index = monitor_index
 
     def capture(self) -> Image.Image:
-        import mss
+        import mss  # lazy import: dependency ini cuma wajib kalau implementasi ini yang dipakai
 
         with mss.mss() as sct:
             monitor = sct.monitors[self._monitor_index]

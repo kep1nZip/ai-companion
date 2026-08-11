@@ -10,6 +10,7 @@ from routine.routine_event import RoutineEventType, EventPriority
 from routine.routine_scheduler import TimeWindow, current_window
 from routine.routine_clock import RoutineClock
 from vision.vision_context import VisionContext
+from vision.vision_signals import matches_presentation, matches_focused_work
 
 # ---------- Cooldown Policy (rekomendasi GPT #2) ----------
 # Cooldown WAJIB dicek, bukan cuma mengandalkan history keberadaan record.
@@ -123,24 +124,13 @@ class SuppressionLevel(Enum):
     ALL_NON_CRITICAL = "all_non_critical"  # tunda SEMUA kecuali priority CRITICAL
 
 
-_NON_CASUAL_KEYWORDS = [r"\bcoding\b", r"\bmengetik\b", r"\bmenulis kode\b", r"\bemail\b"]
-_ALL_SUPPRESS_KEYWORDS = [r"\bmeeting\b", r"\brapat\b", r"\bpresentasi\b", r"\bpresentation\b", r"\bcall\b", r"\bzoom\b"]
-
-
 def suppression_level(vision_context: Optional[VisionContext]) -> SuppressionLevel:
-    """Routine tidak cuma tahu KAPAN harus muncul, tapi juga KAPAN harus diam.
-    Vision dibaca READ-ONLY, tidak pernah dimodifikasi."""
     if vision_context is None:
         return SuppressionLevel.NONE
-
-    text = f"{vision_context.application or ''} {vision_context.summary}".lower()
-
-    if any(re.search(p, text) for p in _ALL_SUPPRESS_KEYWORDS):
+    if matches_presentation(vision_context):
         return SuppressionLevel.ALL_NON_CRITICAL
-
-    if any(re.search(p, text) for p in _NON_CASUAL_KEYWORDS):
+    if matches_focused_work(vision_context):
         return SuppressionLevel.NON_CASUAL
-
     return SuppressionLevel.NONE
 
 

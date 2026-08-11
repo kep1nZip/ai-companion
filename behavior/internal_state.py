@@ -15,12 +15,9 @@ from behavior.internal_state_rules import (
 )
 from behavior.internal_state_history import InternalStateHistory
 from behavior.emotion_state import EmotionState
-from behavior.persistence import (
-    save_persistent_state,
-    load_persistent_state,
-)
 from behavior.relationship_state import RelationshipState
 from database.memory_manager import MemoryManager
+from database.persistence_helper import save_by_marker, load_by_marker
 from config.logger import logger
 
 _PERSISTENCE_MARKER = "__ARONA_INTERNAL_STATE__"
@@ -140,7 +137,7 @@ class InternalStateCoordinator:
             logger.warning("InternalStateCoordinator gagal memproses pesan, fallback ke state sebelumnya: {}", e)
             return self._current
 
-    def manual_override(self, component: str, value: str | int) -> InternalState:
+    def manual_override(self, component: str, value) -> InternalState:
         """component: 'mood' (value: str nama Mood, mis. 'cheerful') | 'energy' /
         'curiosity' / 'initiative' (value: int). Automatic update TETAP LANJUT
         setelahnya — kebijakan sama persis dengan Relationship System."""
@@ -187,18 +184,13 @@ class InternalStateCoordinator:
         return self._history.recent(limit)
 
     def save(self) -> None:
-        save_persistent_state(
-            memory_manager=self._memory_manager,
-            marker=_PERSISTENCE_MARKER,
-            content=_serialize(self._current),
-        )
+        content = _serialize(self._current)
+        save_by_marker(self._memory_manager, _PERSISTENCE_MARKER, content)
 
     def load(self) -> None:
-        loaded = load_persistent_state(
-            memory_manager=self._memory_manager,
-            marker=_PERSISTENCE_MARKER,
-            deserialize=_deserialize,
-        )
-
+        content = load_by_marker(self._memory_manager, _PERSISTENCE_MARKER)
+        if content is None:
+            return
+        loaded = _deserialize(content)
         if loaded is not None:
             self._current = loaded

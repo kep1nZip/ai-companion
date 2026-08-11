@@ -6,6 +6,7 @@ from typing import Optional
 
 from routine.routine_event import RoutineEvent, RoutineEventType
 from database.memory_manager import MemoryManager
+from database.persistence_helper import save_by_marker, load_by_marker
 from config.logger import logger
 
 _PERSISTENCE_MARKER = "__ARONA_ROUTINE_HISTORY__"
@@ -44,32 +45,19 @@ class RoutineHistory:
         return self._recent[-1] if self._recent else None
 
     def save(self) -> None:
-        if self._memory_manager is None:
-            return
-        try:
-            payload = {k.value: v.isoformat() for k, v in self._last_triggered.items()}
-            content = f"{_PERSISTENCE_MARKER}:{json.dumps(payload)}"
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-            if existing:
-                self._memory_manager.update_memory(existing[0].id, content=content)
-            else:
-                self._memory_manager.save_memory("general", content)
-            logger.info("Persistence Saved")
-        except Exception as e:
-            logger.warning("Gagal menyimpan routine history: {}", e)
+        payload = {k.value: v.isoformat() for k, v in self._last_triggered.items()}
+        content = f"{_PERSISTENCE_MARKER}:{json.dumps(payload)}"
+        save_by_marker(self._memory_manager, _PERSISTENCE_MARKER, content)
 
     def load(self) -> None:
-        if self._memory_manager is None:
+        content = load_by_marker(self._memory_manager, _PERSISTENCE_MARKER)
+        if content is None:
             return
         try:
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-            if not existing:
-                return
-            raw = existing[0].content.split(f"{_PERSISTENCE_MARKER}:", 1)[1]
+            raw = content.split(f"{_PERSISTENCE_MARKER}:", 1)[1]
             payload = json.loads(raw)
             self._last_triggered = {
                 RoutineEventType(k): datetime.fromisoformat(v) for k, v in payload.items()
             }
-            logger.info("Persistence Loaded")
         except Exception as e:
             logger.warning("Gagal memuat routine history, pakai default: {}", e)

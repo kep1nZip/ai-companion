@@ -10,11 +10,8 @@ from behavior.relationship_rules import apply_transition, decay
 from behavior.relationship_analyzer import RelationshipAnalyzer
 from behavior.relationship_history import RelationshipHistory
 from behavior.emotion_state import EmotionState
-from behavior.persistence import (
-    save_persistent_state,
-    load_persistent_state,
-)
 from database.memory_manager import MemoryManager
+from database.persistence_helper import save_by_marker, load_by_marker
 from config.logger import logger
 
 # Re-export untuk backward compatibility dengan skeleton v0.6.0.
@@ -118,18 +115,16 @@ class RelationshipCoordinator:
         return self._history.recent(limit)
 
     def save(self) -> None:
-        save_persistent_state(
-            memory_manager=self._memory_manager,
-            marker=_PERSISTENCE_MARKER,
-            content=_serialize(self._current),
-        )
+        """Upsert via database.persistence_helper (marker-based, shared dengan
+        InternalState/Routine/Initiative persistence) — menghindari row baru
+        menumpuk tiap kali disimpan."""
+        content = _serialize(self._current)
+        save_by_marker(self._memory_manager, _PERSISTENCE_MARKER, content)
 
     def load(self) -> None:
-        loaded = load_persistent_state(
-            memory_manager=self._memory_manager,
-            marker=_PERSISTENCE_MARKER,
-            deserialize=_deserialize,
-        )
-
+        content = load_by_marker(self._memory_manager, _PERSISTENCE_MARKER)
+        if content is None:
+            return
+        loaded = _deserialize(content)
         if loaded is not None:
             self._current = loaded

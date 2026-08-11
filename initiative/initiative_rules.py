@@ -8,6 +8,7 @@ from behavior.behavior_state import BehaviorState
 from behavior.mood import Mood
 from routine.routine_event import RoutineEvent
 from vision.vision_context import VisionContext
+from vision.vision_signals import matches_presentation, matches_focused_work
 
 
 @dataclass(frozen=True)
@@ -135,10 +136,6 @@ DEFAULT_THRESHOLD = 50.0
 
 # ---------- Suppression Policy (hard override, DI lewat boolean bukan import modul) ----------
 
-_INTENSE_CODING_PATTERNS = [r"\bcoding\b", r"\bdebugging\b", r"\bmenulis kode\b"]
-_PRESENTATION_PATTERNS = [r"\bmeeting\b", r"\brapat\b", r"\bpresentasi\b", r"\bcall\b", r"\bzoom\b"]
-
-
 def check_suppression(
     vision_context: Optional[VisionContext],
     is_voice_active: bool = False,
@@ -153,11 +150,9 @@ def check_suppression(
     if is_actively_typing:
         return True, "Teacher sedang mengetik"
 
-    if vision_context is not None:
-        text = f"{vision_context.application or ''} {vision_context.summary}".lower()
-        if any(re.search(p, text) for p in _PRESENTATION_PATTERNS):
-            return True, "Teacher sedang meeting/presentasi"
-        if any(re.search(p, text) for p in _INTENSE_CODING_PATTERNS):
-            return True, "Teacher sedang coding intensif"
+    if matches_presentation(vision_context):
+        return True, "Teacher sedang meeting/presentasi"
+    if matches_focused_work(vision_context):
+        return True, "Teacher sedang coding/fokus kerja"
 
     return False, None

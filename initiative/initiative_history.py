@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from database.memory_manager import MemoryManager
+from database.persistence_helper import save_by_marker, load_by_marker
 from config.logger import logger
 
 _PERSISTENCE_MARKER = "__ARONA_INITIATIVE_HISTORY__"
@@ -72,27 +73,16 @@ class InitiativeHistory:
         self.save()
 
     def save(self) -> None:
-        if self._memory_manager is None:
-            return
-        try:
-            payload = [t.isoformat() for t in self._starts]
-            content = f"{_PERSISTENCE_MARKER}:{json.dumps(payload)}"
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-            if existing:
-                self._memory_manager.update_memory(existing[0].id, content=content)
-            else:
-                self._memory_manager.save_memory("general", content)
-        except Exception as e:
-            logger.warning("Gagal menyimpan initiative history: {}", e)
+        payload = [t.isoformat() for t in self._starts]
+        content = f"{_PERSISTENCE_MARKER}:{json.dumps(payload)}"
+        save_by_marker(self._memory_manager, _PERSISTENCE_MARKER, content)
 
     def load(self) -> None:
-        if self._memory_manager is None:
+        content = load_by_marker(self._memory_manager, _PERSISTENCE_MARKER)
+        if content is None:
             return
         try:
-            existing = self._memory_manager.search_memory(_PERSISTENCE_MARKER, limit=1)
-            if not existing:
-                return
-            raw = existing[0].content.split(f"{_PERSISTENCE_MARKER}:", 1)[1]
+            raw = content.split(f"{_PERSISTENCE_MARKER}:", 1)[1]
             payload = json.loads(raw)
             self._starts = [datetime.fromisoformat(t) for t in payload]
         except Exception as e:

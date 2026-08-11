@@ -17,6 +17,12 @@ _VISION_PROMPT = (
 )
 
 
+class VisionAnalysisError(Exception):
+    """Terjadi saat Gemini Vision mengembalikan respons kosong/tidak valid —
+    pola sama dengan GeminiResponseError (gemini.py) dan CompanionError
+    (companion.py), sesuai CODE_STYLE §7."""
+
+
 class ImageAnalyzer:
     """Cuma mengirim gambar ke Gemini Vision dan menerima deskripsi natural
     language. TIDAK membangun prompt akhir, TIDAK tahu behavior/memory/GUI."""
@@ -30,17 +36,24 @@ class ImageAnalyzer:
         image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
 
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                    types.Part(text=_VISION_PROMPT),
+                ],
+            )
+        ]
+
         logger.info("Vision Request")
         response = self._client.models.generate_content(
             model=self._model_name,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                _VISION_PROMPT,
-            ],
+            contents=contents,
         )
         logger.info("Vision Response")
 
         text = response.text
         if not text:
-            raise ValueError("Gemini Vision mengembalikan respons kosong.")
+            raise VisionAnalysisError("Gemini Vision mengembalikan respons kosong.")
         return text
