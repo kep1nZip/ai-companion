@@ -25,6 +25,11 @@ _DEFAULT_BREATHING_CYCLE = 4.0
 
 
 class IdleCoordinator:
+    """Koordinator idle animation (blink + breathing). Satu-satunya titik yang
+    boleh menerima Mood dari luar (apply_mood, v0.6.5) dan satu-satunya yang
+    tahu IdleScheduler — modul lain (AvatarManager) cuma tahu class ini lewat
+    start()/stop()/apply_mood()."""
+    
     def __init__(
         self,
         on_update: OnParameterUpdate,

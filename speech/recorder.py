@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import sounddevice as sd
 
@@ -14,9 +16,11 @@ class Recorder:
         self._channels = channels
         self._frames: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
+        self._lock = threading.Lock()   
 
     def start(self) -> None:
-        self._frames = []
+        with self._lock:
+            self._frames = []
         self._stream = sd.InputStream(
             samplerate=self._samplerate,
             channels=self._channels,
@@ -29,7 +33,8 @@ class Recorder:
     def _on_audio_chunk(self, indata, frames, time_info, status) -> None:
         if status:
             logger.warning("Recorder input status: {}", status)
-        self._frames.append(indata.copy())
+        with self._lock:
+            self._frames.append(indata.copy())
 
     def stop(self) -> tuple[np.ndarray, int]:
         if self._stream is None:
@@ -40,9 +45,12 @@ class Recorder:
         self._stream = None
         logger.info("Recorder: recording stopped.")
 
-        if not self._frames:
+        with self._lock:
+            frames = self._frames
+            self._frames = []
+
+        if not frames:
             return np.array([], dtype="float32"), self._samplerate
 
-        audio = np.concatenate(self._frames, axis=0).flatten()
-        self._frames = []
+        audio = np.concatenate(frames, axis=0).flatten()
         return audio, self._samplerate

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -27,6 +28,7 @@ class VTubeStudioClient:
         self._plugin_developer = plugin_developer
         self._token_path = token_path
         self._ws = None
+        self._send_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         self._ws = await websockets.connect(self._url, ping_interval=None)
@@ -111,9 +113,10 @@ class VTubeStudioClient:
             "messageType": message_type,
             "data": data,
         }
-        await self._ws.send(json.dumps(request))
-        raw_response = await self._ws.recv()
-        return json.loads(raw_response)
+        async with self._send_lock:
+            await self._ws.send(json.dumps(request))
+            raw_response = await self._ws.recv()
+            return json.loads(raw_response)
 
     def _load_token(self) -> Optional[str]:
         if not self._token_path.exists():

@@ -44,7 +44,8 @@ class AvatarManager:
     @property
     def state(self) -> AvatarState:
         return self._state
-    
+
+    @property
     def animation_state(self) -> AnimationState:
         """Snapshot read-only layer animasi yang sedang aktif — dibangun dari
         self._parameter_layers yang sudah ada sejak v0.5.1, tidak ada state baru."""
