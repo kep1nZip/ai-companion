@@ -6,7 +6,10 @@ from speech.voice_manager import VoiceManager, VoiceError, VoiceState
 
 
 class VoiceWorker(QThread):
-    """Jalankan pipeline voice (STT -> Companion -> TTS -> Playback) di background thread."""
+    """Menjalankan pipeline voice (STT → Companion → TTS → Playback) via
+    VoiceManager di background thread. GUI TIDAK PERNAH memanggil
+    Recorder/SpeechToText/TextToSpeech/AudioPlayer langsung — semua lewat
+    VoiceManager, worker ini cuma menjembatani ke Qt Signal."""
 
     state_changed = Signal(str)
     reply_ready = Signal(str, str)  # (user_text, reply_text)

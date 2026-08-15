@@ -14,9 +14,6 @@ from vision.screen_capture import MssScreenCapture
 from vision.image_analyzer import ImageAnalyzer
 from config.constants import VISION_MODEL_NAME, VISION_DEFAULT_TTL
 
-from routine.routine import Routine
-from config.constants import ROUTINE_TIMEZONE
-
 from developer.performance_debug import PerformanceTracker
 from developer.developer import DeveloperService
 
@@ -31,10 +28,6 @@ def main() -> None:
         image_analyzer=ImageAnalyzer(api_key=GEMINI_API_KEY, model_name=VISION_MODEL_NAME),
         default_ttl=VISION_DEFAULT_TTL,
     )
-
-    routine = Routine(
-        memory_manager=None
-    )  
 
     performance_tracker = PerformanceTracker()
 

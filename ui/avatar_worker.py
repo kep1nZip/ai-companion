@@ -19,8 +19,10 @@ from avatar.breathing import BreathingAnimator
 
 
 class AvatarWorker(QThread):
-    """Menjalankan event loop asyncio AvatarManager + Idle Animation di background thread.
-    GUI hanya boleh panggil request_reaction(), animate_lipsync(), dan stop_avatar()."""
+    """Menjalankan event loop asyncio AvatarManager + Idle Animation di
+    background thread. GUI HANYA boleh panggil request_reaction(),
+    animate_lipsync(), apply_mood(), dan stop_avatar() — tidak pernah
+    menyentuh AvatarManager/VTubeStudioClient langsung."""
 
     state_changed = Signal(str)
 

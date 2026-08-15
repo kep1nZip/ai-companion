@@ -6,7 +6,9 @@ from ai.companion import Companion, RateLimitError, CompanionError
 
 
 class ChatWorker(QThread):
-    """Jalanin companion.chat() di background thread supaya GUI tidak freeze."""
+    """Menjalankan Companion.chat() di background thread — GUI TIDAK PERNAH
+    memanggil companion.chat() langsung di main thread (biar tidak freeze).
+    Tidak ada logic AI di sini, cuma pass-through + error mapping ke Signal."""
 
     result_ready = Signal(str)
     error_occurred = Signal(str, bool)  # (pesan, is_rate_limit)

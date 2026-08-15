@@ -6,7 +6,9 @@ from speech.voice_manager import VoiceManager, VoiceState
 
 
 class SpeakWorker(QThread):
-    """Jalankan TTS + playback untuk teks apa pun (misal balasan dari chat teks) di background."""
+    """Menjalankan VoiceManager.speak() (TTS+playback tanpa STT/Companion) di
+    background thread — dipakai untuk membacakan balasan dari chat TEKS.
+    Tidak pernah memanggil Companion; murni text-to-speech."""
 
     state_changed = Signal(str)
     finished_speaking = Signal()

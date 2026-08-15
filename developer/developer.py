@@ -17,6 +17,7 @@ from developer.vision_debug import VisionSnapshot, build_vision_snapshot
 from config.constants import LOG_DIR, LOG_FILE
 from config.logger import logger
 
+from avatar.avatar_manager import AvatarState
 
 @dataclass(frozen=True)
 class HealthStatus:
@@ -127,16 +128,22 @@ class DeveloperService:
     # ---------- System Health (rekomendasi GPT #2) ----------
 
     def get_health(self) -> HealthStatus:
-        behavior_ok = self.get_behavior() is not None
-        memory_ok = self.get_memory(limit=1) is not None
+        """System Health — best-effort read-only check, bukan live probe. `gemini`
+        di sini adalah PROXY (disamakan dengan behavior_ok), bukan pengecekan
+        langsung ke Gemini API, karena Developer Tools dilarang mengirim request
+        Gemini sungguhan (Read-Only Policy)."""
+        behavior_snapshot = self.get_behavior()
+        memory_snapshot = self.get_memory(limit=1)
+        avatar_snapshot = self.get_avatar()
+
         return HealthStatus(
-            behavior=behavior_ok,
-            vision=True,
-            routine=self._companion is not None,
-            initiative=self._companion is not None,
-            memory=memory_ok,
-            avatar=self._avatar_manager is not None,
-            gemini=behavior_ok,
+            behavior=behavior_snapshot is not None,
+            vision=self._companion is not None,
+            routine=self.get_routine() is not None,
+            initiative=self.get_initiative() is not None,
+            memory=memory_snapshot is not None,
+            avatar=avatar_snapshot.connection_state == AvatarState.READY.value,
+            gemini=behavior_snapshot is not None,
         )
 
     # ---------- Facade (rekomendasi GPT #3) ----------
