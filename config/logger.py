@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from loguru import logger
 
@@ -13,6 +15,7 @@ logger.add(
     rotation=LOG_ROTATION,
     retention=LOG_RETENTION,
     encoding="utf-8",
+    diagnose=False,   # cegah local variable (termasuk API key) tercetak di traceback log
 )
 
 __all__ = ["logger"]

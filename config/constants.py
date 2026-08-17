@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 APP_NAME = "Arona"
 VERSION = "0.9.5"
 MODEL_NAME = "gemini-2.5-flash"
