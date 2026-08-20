@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_NAME = "Arona"
-VERSION = "0.9.5"
+VERSION = "1.2.0"
 MODEL_NAME = "gemini-2.5-flash"
 TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
 TTS_VOICE_NAME = "Zephyr"

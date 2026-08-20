@@ -9,7 +9,7 @@ class Sidebar(QWidget):
     Voice/Avatar/Settings tetap placeholder non-fungsional sampai fiturnya
     benar-benar diimplementasikan sebagai halaman terpisah."""
 
-    navigate_requested = Signal(str)  # "chat" | "memory"
+    navigate_requested = Signal(str)  # "chat" | "memory" | "voice"
 
     def __init__(self):
         super().__init__()
@@ -28,10 +28,11 @@ class Sidebar(QWidget):
 
         self._chat_button = self._make_item("Chat", active=True)
         self._memory_button = self._make_item("Memory")
+        self._voice_button = self._make_item("Voice")
 
         layout.addWidget(self._chat_button)
         layout.addWidget(self._memory_button)
-        layout.addWidget(self._make_item("Voice", coming_soon=True))
+        layout.addWidget(self._voice_button)
         layout.addWidget(self._make_item("Avatar", coming_soon=True))
 
         layout.addStretch()
@@ -40,13 +41,21 @@ class Sidebar(QWidget):
 
         self._chat_button.clicked.connect(lambda: self._select("chat"))
         self._memory_button.clicked.connect(lambda: self._select("memory"))
+        self._voice_button.clicked.connect(lambda: self._select("voice"))
 
     def _select(self, page_name: str) -> None:
-        self._set_active(self._chat_button if page_name == "chat" else self._memory_button)
+        self._set_active(self._button_for(page_name))
         self.navigate_requested.emit(page_name)
 
+    def _button_for(self, page_name: str) -> QPushButton:
+        return {
+            "chat": self._chat_button,
+            "memory": self._memory_button,
+            "voice": self._voice_button,
+        }[page_name]
+
     def _set_active(self, active_button: QPushButton) -> None:
-        for button in (self._chat_button, self._memory_button):
+        for button in (self._chat_button, self._memory_button, self._voice_button):
             is_active = button is active_button
             button.setObjectName("sidebarItemActive" if is_active else "sidebarItem")
             button.style().unpolish(button)

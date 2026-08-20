@@ -197,4 +197,49 @@ QLabel#memoryDetailMeta {
     color: #6b6e7a;
     font-size: 12px;
 }
+
+/* ---------- Voice GUI (v1.2) ---------- */
+
+QWidget#voicePage {
+    background-color: #1e1f26;
+}
+
+QLabel#voicePageTitle {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#voiceSectionLabel {
+    color: #a0a3b0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+QLabel#voiceStatusLabel {
+    color: #e6e6e6;
+    font-size: 13px;
+}
+
+QLabel#voiceErrorLabel {
+    color: #e88a8a;
+    font-size: 13px;
+}
+
+QPushButton#voiceRecordButton {
+    padding: 10px 24px;
+}
+
+QFrame#voiceTranscriptBox {
+    background-color: #2c2e38;
+    border: 1px solid #33343f;
+    border-radius: 10px;
+    min-height: 48px;
+}
+
+QLabel#voiceTranscriptContent {
+    color: #e6e6e6;
+    font-size: 13px;
+}
 """

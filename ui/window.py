@@ -23,6 +23,7 @@ from ui.avatar_worker import AvatarWorker  # <-- Tambahan Import Avatar
 from ui.navigation import Sidebar
 from ui.memory_service import MemoryService  # <-- v1.1
 from ui.memory import MemoryPage  # <-- v1.1
+from ui.voice import VoicePage  # <-- v1.2
 from ai.companion import Companion
 from ai.commands import is_command, run_command
 from speech.voice_manager import VoiceManager, VoiceState
@@ -142,9 +143,14 @@ class MainWindow(QMainWindow):
 
         self._chat_page = self._build_chat_page()
         self._memory_page = MemoryPage(self._memory_service)
+        # v1.2: VoicePage reuses the SAME VoiceManager instance already created
+        # above for the Chat page's mic button — no second VoiceManager, no
+        # second Recorder/STT/TTS/AudioPlayer (Shared Companion Path §14).
+        self._voice_page = VoicePage(self._voice_manager)
 
         self._pages.addWidget(self._chat_page)
         self._pages.addWidget(self._memory_page)
+        self._pages.addWidget(self._voice_page)
 
         root_layout.addWidget(self._pages, stretch=1)
 
@@ -194,6 +200,8 @@ class MainWindow(QMainWindow):
             self._pages.setCurrentWidget(self._chat_page)
         elif page_name == "memory":
             self._pages.setCurrentWidget(self._memory_page)
+        elif page_name == "voice":
+            self._pages.setCurrentWidget(self._voice_page)
 
     # ---------- Text Chat Actions ----------
 
