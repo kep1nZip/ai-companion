@@ -121,4 +121,80 @@ QStatusBar {
     background-color: #23252e;
     color: #a0a3b0;
 }
+
+/* ---------- Memory GUI (v1.1) ---------- */
+
+QWidget#memoryPage {
+    background-color: #1e1f26;
+}
+
+QLabel#memoryPageTitle {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QScrollArea#memoryListArea {
+    background-color: #1e1f26;
+    border: none;
+}
+
+QFrame#memoryCard {
+    background-color: #2c2e38;
+    border: 1px solid #33343f;
+    border-radius: 10px;
+}
+
+QFrame#memoryCard:hover {
+    border: 1px solid #4a90e2;
+}
+
+QLabel#memoryCardContent {
+    color: #e6e6e6;
+    font-size: 13px;
+}
+
+QLabel#memoryCardMeta {
+    color: #a0a3b0;
+    font-size: 11px;
+}
+
+QLabel#memoryStateLabel {
+    color: #6b6e7a;
+    font-size: 13px;
+    padding: 24px;
+}
+
+QWidget#memoryDetail {
+    background-color: #1e1f26;
+}
+
+QPushButton#memoryBackButton {
+    background-color: transparent;
+    color: #4a90e2;
+    font-weight: 600;
+    padding: 4px 8px;
+}
+
+QPushButton#memoryBackButton:hover {
+    background-color: #2c2e38;
+}
+
+QLabel#memoryDetailCategory {
+    color: #4a90e2;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+QLabel#memoryDetailContent {
+    color: #e6e6e6;
+    font-size: 15px;
+    padding: 12px 0;
+}
+
+QLabel#memoryDetailMeta {
+    color: #6b6e7a;
+    font-size: 12px;
+}
 """

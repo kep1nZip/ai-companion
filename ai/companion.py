@@ -148,6 +148,12 @@ class Companion:
     def list_memories(self, limit: int = 50) -> list[Memory]:
         return self._memory_manager.load_memories(limit=limit)
 
+    def search_memories(self, query: str, limit: int = 50) -> list[Memory]:
+        """Passthrough read-only ke MemoryManager.search_memory — dipakai Memory
+        GUI (v1.1). TIDAK memanggil Gemini/embedding, murni SQL LIKE yang sudah
+        ada di MemoryManager (Search Policy v1.1: tidak ada mesin pencarian baru)."""
+        return self._memory_manager.search_memory(query, limit=limit)
+
     def delete_memory(self, memory_id: int) -> None:
         self._memory_manager.delete_memory(memory_id)
 

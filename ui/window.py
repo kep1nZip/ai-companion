@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QMessageBox,
     QLabel,  # <-- Tambahan Import QLabel
+    QStackedWidget,  # <-- v1.1: page switching (Chat / Memory)
 )
 
 from ui.chat import ChatArea
@@ -20,6 +21,8 @@ from ui.voice_worker import VoiceWorker
 from ui.speak_worker import SpeakWorker
 from ui.avatar_worker import AvatarWorker  # <-- Tambahan Import Avatar
 from ui.navigation import Sidebar
+from ui.memory_service import MemoryService  # <-- v1.1
+from ui.memory import MemoryPage  # <-- v1.1
 from ai.companion import Companion
 from ai.commands import is_command, run_command
 from speech.voice_manager import VoiceManager, VoiceState
@@ -81,6 +84,10 @@ class MainWindow(QMainWindow):
             performance_tracker=performance_tracker,
         )
 
+        # ---------- Memory GUI (v1.1) — read-only boundary di atas Companion ----------
+        self._memory_service = MemoryService(companion)
+        # -----------------------------------------------------------
+
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(900, 600)
         self.resize(1000, 700)
@@ -126,8 +133,27 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(0)
 
         self._sidebar = Sidebar()
+        self._sidebar.navigate_requested.connect(self._on_navigate)
         root_layout.addWidget(self._sidebar)
 
+        # ---------- v1.1: QStackedWidget menggantikan single content widget,
+        # supaya sidebar bisa switch antar halaman (Chat / Memory) ----------
+        self._pages = QStackedWidget()
+
+        self._chat_page = self._build_chat_page()
+        self._memory_page = MemoryPage(self._memory_service)
+
+        self._pages.addWidget(self._chat_page)
+        self._pages.addWidget(self._memory_page)
+
+        root_layout.addWidget(self._pages, stretch=1)
+
+        self.setCentralWidget(central)
+
+    def _build_chat_page(self) -> QWidget:
+        """Sama persis dengan content widget v1.0 sebelumnya — cuma dipindah
+        jadi method terpisah supaya bisa dipasang sebagai satu page di
+        QStackedWidget. Tidak ada perubahan logic chat/voice/avatar sama sekali."""
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
@@ -159,9 +185,15 @@ class MainWindow(QMainWindow):
 
         content_layout.addWidget(input_row)
 
-        root_layout.addWidget(content, stretch=1)
+        return content
 
-        self.setCentralWidget(central)
+    # ---------- Navigation (v1.1) ----------
+
+    def _on_navigate(self, page_name: str) -> None:
+        if page_name == "chat":
+            self._pages.setCurrentWidget(self._chat_page)
+        elif page_name == "memory":
+            self._pages.setCurrentWidget(self._memory_page)
 
     # ---------- Text Chat Actions ----------
 
