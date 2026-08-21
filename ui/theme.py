@@ -242,4 +242,49 @@ QLabel#voiceTranscriptContent {
     color: #e6e6e6;
     font-size: 13px;
 }
+
+/* ---------- Avatar GUI (v1.3) ---------- */
+
+QWidget#avatarPage {
+    background-color: #1e1f26;
+}
+
+QLabel#avatarPageTitle {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#avatarSectionLabel {
+    color: #a0a3b0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+QLabel#avatarStatusLabel {
+    color: #e6e6e6;
+    font-size: 13px;
+}
+
+QLabel#avatarErrorLabel {
+    color: #e0b054;
+    font-size: 13px;
+}
+
+QFrame#avatarStateCard {
+    background-color: #2c2e38;
+    border: 1px solid #33343f;
+    border-radius: 10px;
+    min-height: 32px;
+}
+
+QLabel#avatarStateCardContent {
+    color: #e6e6e6;
+    font-size: 13px;
+}
+
+QPushButton#avatarControlButton {
+    padding: 8px 20px;
+}
 """

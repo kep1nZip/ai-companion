@@ -24,6 +24,7 @@ from ui.navigation import Sidebar
 from ui.memory_service import MemoryService  # <-- v1.1
 from ui.memory import MemoryPage  # <-- v1.1
 from ui.voice import VoicePage  # <-- v1.2
+from ui.avatar import AvatarPage  # <-- v1.3
 from ai.companion import Companion
 from ai.commands import is_command, run_command
 from speech.voice_manager import VoiceManager, VoiceState
@@ -147,10 +148,15 @@ class MainWindow(QMainWindow):
         # above for the Chat page's mic button — no second VoiceManager, no
         # second Recorder/STT/TTS/AudioPlayer (Shared Companion Path §14).
         self._voice_page = VoicePage(self._voice_manager)
+        # v1.3: AvatarPage reuses the SAME AvatarManager + AvatarWorker instances
+        # already created above (VTube Studio / Avatar Initialization block) —
+        # no second AvatarManager, no second VTube Studio connection.
+        self._avatar_page = AvatarPage(self._avatar_manager, self._avatar_worker)
 
         self._pages.addWidget(self._chat_page)
         self._pages.addWidget(self._memory_page)
         self._pages.addWidget(self._voice_page)
+        self._pages.addWidget(self._avatar_page)
 
         root_layout.addWidget(self._pages, stretch=1)
 
@@ -202,6 +208,8 @@ class MainWindow(QMainWindow):
             self._pages.setCurrentWidget(self._memory_page)
         elif page_name == "voice":
             self._pages.setCurrentWidget(self._voice_page)
+        elif page_name == "avatar":
+            self._pages.setCurrentWidget(self._avatar_page)
 
     # ---------- Text Chat Actions ----------
 
