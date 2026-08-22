@@ -287,4 +287,54 @@ QLabel#avatarStateCardContent {
 QPushButton#avatarControlButton {
     padding: 8px 20px;
 }
+
+/* ---------- Settings GUI (v1.4) ---------- */
+
+QWidget#settingsPage {
+    background-color: #1e1f26;
+}
+
+QLabel#settingsPageTitle {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#settingsSectionLabel {
+    color: #a0a3b0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding-top: 4px;
+}
+
+QLabel#settingsFieldLabel {
+    color: #e6e6e6;
+    font-size: 13px;
+}
+
+QLabel#settingsFieldValue {
+    color: #a0a3b0;
+    font-size: 13px;
+}
+
+QLabel#settingsHintLabel {
+    color: #e0b054;
+    font-size: 12px;
+}
+
+QLabel#settingsErrorLabel {
+    color: #e88a8a;
+    font-size: 13px;
+}
+
+QPushButton#settingsSecondaryButton {
+    background-color: transparent;
+    color: #e6e6e6;
+    border: 1px solid #3a3d4a;
+}
+
+QPushButton#settingsSecondaryButton:hover {
+    background-color: #2c2e38;
+}
 """

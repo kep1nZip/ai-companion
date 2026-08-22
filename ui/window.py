@@ -25,6 +25,8 @@ from ui.memory_service import MemoryService  # <-- v1.1
 from ui.memory import MemoryPage  # <-- v1.1
 from ui.voice import VoicePage  # <-- v1.2
 from ui.avatar import AvatarPage  # <-- v1.3
+from ui.settings_service import SettingsService  # <-- v1.4
+from ui.settings import SettingsPage  # <-- v1.4
 from ai.companion import Companion
 from ai.commands import is_command, run_command
 from speech.voice_manager import VoiceManager, VoiceState
@@ -152,11 +154,18 @@ class MainWindow(QMainWindow):
         # already created above (VTube Studio / Avatar Initialization block) —
         # no second AvatarManager, no second VTube Studio connection.
         self._avatar_page = AvatarPage(self._avatar_manager, self._avatar_worker)
+        # v1.4: SettingsService needs NO reference to Companion/any manager —
+        # it only reads config/constants.py + config/settings.py + local file
+        # checks, and writes GEMINI_API_KEY to .env. Settings is not a
+        # SettingsManager that reaches into subsystems (Companion Rules §31).
+        self._settings_service = SettingsService()
+        self._settings_page = SettingsPage(self._settings_service)
 
         self._pages.addWidget(self._chat_page)
         self._pages.addWidget(self._memory_page)
         self._pages.addWidget(self._voice_page)
         self._pages.addWidget(self._avatar_page)
+        self._pages.addWidget(self._settings_page)
 
         root_layout.addWidget(self._pages, stretch=1)
 
@@ -210,6 +219,8 @@ class MainWindow(QMainWindow):
             self._pages.setCurrentWidget(self._voice_page)
         elif page_name == "avatar":
             self._pages.setCurrentWidget(self._avatar_page)
+        elif page_name == "settings":
+            self._pages.setCurrentWidget(self._settings_page)
 
     # ---------- Text Chat Actions ----------
 
