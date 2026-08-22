@@ -5,10 +5,10 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
 
 
 class Sidebar(QWidget):
-    """Sidebar navigasi permanen. Chat/Memory/Voice/Avatar/Settings semuanya
-    fungsional (v1.1-v1.4) — tidak ada lagi item placeholder "Coming Soon"."""
+    """Sidebar navigasi permanen. Chat/Memory/Voice/Avatar/Settings/Vision
+    semuanya fungsional (v1.1-v1.5) — tidak ada lagi item placeholder."""
 
-    navigate_requested = Signal(str)  # "chat" | "memory" | "voice" | "avatar" | "settings"
+    navigate_requested = Signal(str)  # "chat" | "memory" | "voice" | "avatar" | "settings" | "vision"
 
     def __init__(self):
         super().__init__()
@@ -29,12 +29,14 @@ class Sidebar(QWidget):
         self._memory_button = self._make_item("Memory")
         self._voice_button = self._make_item("Voice")
         self._avatar_button = self._make_item("Avatar")
+        self._vision_button = self._make_item("Vision")
         self._settings_button = self._make_item("Settings")
 
         layout.addWidget(self._chat_button)
         layout.addWidget(self._memory_button)
         layout.addWidget(self._voice_button)
         layout.addWidget(self._avatar_button)
+        layout.addWidget(self._vision_button)
 
         layout.addStretch()
 
@@ -44,6 +46,7 @@ class Sidebar(QWidget):
         self._memory_button.clicked.connect(lambda: self._select("memory"))
         self._voice_button.clicked.connect(lambda: self._select("voice"))
         self._avatar_button.clicked.connect(lambda: self._select("avatar"))
+        self._vision_button.clicked.connect(lambda: self._select("vision"))
         self._settings_button.clicked.connect(lambda: self._select("settings"))
 
     def _select(self, page_name: str) -> None:
@@ -56,13 +59,14 @@ class Sidebar(QWidget):
             "memory": self._memory_button,
             "voice": self._voice_button,
             "avatar": self._avatar_button,
+            "vision": self._vision_button,
             "settings": self._settings_button,
         }[page_name]
 
     def _set_active(self, active_button: QPushButton) -> None:
         for button in (
             self._chat_button, self._memory_button, self._voice_button,
-            self._avatar_button, self._settings_button,
+            self._avatar_button, self._vision_button, self._settings_button,
         ):
             is_active = button is active_button
             button.setObjectName("sidebarItemActive" if is_active else "sidebarItem")

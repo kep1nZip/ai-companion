@@ -337,4 +337,62 @@ QPushButton#settingsSecondaryButton {
 QPushButton#settingsSecondaryButton:hover {
     background-color: #2c2e38;
 }
+
+/* ---------- Vision GUI (v1.5) ---------- */
+
+QWidget#visionPage {
+    background-color: #1e1f26;
+}
+
+QLabel#visionPageTitle {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#visionSectionLabel {
+    color: #a0a3b0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding-top: 4px;
+}
+
+QLabel#visionStatusLabel {
+    color: #e6e6e6;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QLabel#visionFieldValue {
+    color: #a0a3b0;
+    font-size: 13px;
+}
+
+QLabel#visionErrorLabel {
+    color: #e88a8a;
+    font-size: 13px;
+}
+
+QFrame#visionCard {
+    background-color: #2c2e38;
+    border: 1px solid #33343f;
+    border-radius: 10px;
+    min-height: 40px;
+}
+
+QLabel#visionCardContent {
+    color: #e6e6e6;
+    font-size: 13px;
+}
+
+QPushButton#visionSecondaryButton {
+    background-color: transparent;
+    color: #e6e6e6;
+    border: 1px solid #3a3d4a;
+}
+
+QPushButton#visionSecondaryButton:hover {
+    background-color: #2c2e38;
+}
 """

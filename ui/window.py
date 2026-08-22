@@ -27,6 +27,7 @@ from ui.voice import VoicePage  # <-- v1.2
 from ui.avatar import AvatarPage  # <-- v1.3
 from ui.settings_service import SettingsService  # <-- v1.4
 from ui.settings import SettingsPage  # <-- v1.4
+from ui.vision import VisionPage  # <-- v1.5
 from ai.companion import Companion
 from ai.commands import is_command, run_command
 from speech.voice_manager import VoiceManager, VoiceState
@@ -160,12 +161,17 @@ class MainWindow(QMainWindow):
         # SettingsManager that reaches into subsystems (Companion Rules §31).
         self._settings_service = SettingsService()
         self._settings_page = SettingsPage(self._settings_service)
+        # v1.5: VisionPage reuses self._companion directly — Vision.capture()/
+        # analyze() already live inside Companion via capture_vision()/
+        # current_vision_context(), no second Vision/ScreenCapture/ImageAnalyzer.
+        self._vision_page = VisionPage(self._companion)
 
         self._pages.addWidget(self._chat_page)
         self._pages.addWidget(self._memory_page)
         self._pages.addWidget(self._voice_page)
         self._pages.addWidget(self._avatar_page)
         self._pages.addWidget(self._settings_page)
+        self._pages.addWidget(self._vision_page)
 
         root_layout.addWidget(self._pages, stretch=1)
 
@@ -221,6 +227,8 @@ class MainWindow(QMainWindow):
             self._pages.setCurrentWidget(self._avatar_page)
         elif page_name == "settings":
             self._pages.setCurrentWidget(self._settings_page)
+        elif page_name == "vision":
+            self._pages.setCurrentWidget(self._vision_page)
 
     # ---------- Text Chat Actions ----------
 
