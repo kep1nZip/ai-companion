@@ -38,7 +38,13 @@ def main() -> None:
 
     logger.info("Companion backend ready. Model: {}", MODEL_NAME)
 
-    window = MainWindow(companion, performance_tracker=performance_tracker)
+    # v1.5.2: `vision` diteruskan LANGSUNG ke MainWindow (bukan cuma lewat
+    # Companion) supaya VisionPage bisa memanggil vision.set_mode()/
+    # get_mode() untuk kontrol OFF/MANUAL/AUTO (spec §4: "Vision GUI ->
+    # Vision Service" langsung) TANPA menyentuh ai/companion.py yang beku
+    # (Architecture Freeze Policy) — ini instance Vision yang SAMA persis
+    # dengan yang dipakai Companion di atas, tidak ada instance kedua.
+    window = MainWindow(companion, vision, performance_tracker=performance_tracker)
     window.show()
 
     sys.exit(app.exec())

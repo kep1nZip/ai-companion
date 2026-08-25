@@ -395,4 +395,24 @@ QPushButton#visionSecondaryButton {
 QPushButton#visionSecondaryButton:hover {
     background-color: #2c2e38;
 }
+
+/* ---------- Vision GUI (v1.5.2 — Mode radio buttons) ---------- */
+
+QRadioButton#visionModeRadio {
+    color: #e6e6e6;
+    font-size: 13px;
+    padding: 2px 0px;
+    spacing: 8px;
+}
+
+QRadioButton#visionModeRadio::indicator {
+    width: 14px;
+    height: 14px;
+}
+
+QLabel#visionStatusLabelAuto {
+    color: #7fd48a;
+    font-size: 15px;
+    font-weight: 700;
+}
 """

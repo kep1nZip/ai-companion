@@ -29,6 +29,7 @@ from ui.settings_service import SettingsService  # <-- v1.4
 from ui.settings import SettingsPage  # <-- v1.4
 from ui.vision import VisionPage  # <-- v1.5
 from ai.companion import Companion
+from vision.vision import Vision  # <-- v1.5.2: diteruskan langsung, lihat main_gui.py
 from ai.commands import is_command, run_command
 from speech.voice_manager import VoiceManager, VoiceState
 from avatar.avatar_manager import AvatarManager  # <-- Tambahan Import Avatar
@@ -47,9 +48,10 @@ from developer.developer import DeveloperService
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, companion: Companion, performance_tracker: PerformanceTracker):
+    def __init__(self, companion: Companion, vision: Vision, performance_tracker: PerformanceTracker):
         super().__init__()
         self._companion = companion
+        self._vision = vision  # <-- v1.5.2: instance yang SAMA dengan milik Companion, lihat main_gui.py
         self._performance_tracker = performance_tracker
         self._worker: ChatWorker | None = None
         self._voice_worker: VoiceWorker | None = None
@@ -164,7 +166,10 @@ class MainWindow(QMainWindow):
         # v1.5: VisionPage reuses self._companion directly — Vision.capture()/
         # analyze() already live inside Companion via capture_vision()/
         # current_vision_context(), no second Vision/ScreenCapture/ImageAnalyzer.
-        self._vision_page = VisionPage(self._companion)
+        # v1.5.2: VisionPage juga menerima self._vision langsung (instance yang
+        # SAMA, lihat main_gui.py) khusus untuk kontrol mode OFF/MANUAL/AUTO
+        # (set_mode/get_mode) — capture Manual/Auto tetap lewat Companion.
+        self._vision_page = VisionPage(self._companion, self._vision)
 
         self._pages.addWidget(self._chat_page)
         self._pages.addWidget(self._memory_page)
@@ -368,5 +373,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._avatar_worker.stop_avatar()  # <-- Menghentikan worker avatar sebelum keluar
+        # v1.5.2 spec §34/§48: scheduler Auto Vision (kalau sedang jalan)
+        # TIDAK BOLEH bertahan setelah aplikasi ditutup — shutdown() men-stop
+        # thread-nya secara bersih (join dengan timeout).
+        self._vision.shutdown()
         logger.info("Application closed.")
         event.accept()
