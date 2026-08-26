@@ -180,6 +180,16 @@ class Companion:
             return None
         return self._vision.get_context()
 
+    def get_vision_mode(self) -> str:
+        """v1.7 (Developer Diagnostics §13): passthrough READ-ONLY tipis ke
+        Vision.get_mode() yang sudah ada sejak v1.5.2 — sebelumnya cuma
+        dipakai VisionPage lewat instance Vision yang diteruskan langsung
+        (lihat main_gui.py), belum pernah di-expose lewat Companion. TIDAK
+        memanggil refresh()/capture apa pun, murni baca state mode saat ini."""
+        if self._vision is None:
+            return "unknown"
+        return self._vision.get_mode().value
+
     # ---------- Routine (Developer Panel prep v0.9.5, Routine GUI v1.6) ----------
 
     def get_pending_routine_events(self) -> list[RoutineEvent]:

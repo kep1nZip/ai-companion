@@ -474,4 +474,70 @@ QPushButton#routineSecondaryButton {
 QPushButton#routineSecondaryButton:hover {
     background-color: #2c2e38;
 }
+
+/* ---------- Developer Dashboard (v1.7) ---------- */
+
+QDialog#developerDashboard {
+    background-color: #1e1f26;
+}
+
+QLabel#developerPageTitle {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#developerTimestampLabel {
+    color: #6b6e7a;
+    font-size: 11px;
+}
+
+QLabel#developerSectionLabel {
+    color: #a0a3b0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding-top: 4px;
+}
+
+QLabel#developerErrorLabel {
+    color: #e88a8a;
+    font-size: 13px;
+}
+
+QFrame#developerCard {
+    background-color: #2c2e38;
+    border: 1px solid #33343f;
+    border-radius: 10px;
+    min-height: 32px;
+}
+
+QLabel#developerCardContent {
+    color: #e6e6e6;
+    font-size: 12px;
+}
+
+QPushButton#developerSecondaryButton {
+    background-color: transparent;
+    color: #e6e6e6;
+    border: 1px solid #3a3d4a;
+}
+
+QPushButton#developerSecondaryButton:hover {
+    background-color: #2c2e38;
+}
+
+QScrollArea#developerScrollArea {
+    background-color: #1e1f26;
+    border: none;
+}
+
+QPlainTextEdit#developerLogView {
+    background-color: #16171c;
+    color: #a0e6a0;
+    border: 1px solid #33343f;
+    border-radius: 8px;
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 11px;
+}
 """

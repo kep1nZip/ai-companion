@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -29,9 +29,17 @@ class SettingsPage(QWidget):
     Config Path semuanya konstanta murni di constants.py, dipakai sekali saat
     construct object masing-masing subsystem, tanpa reload mechanism).
 
-    Developer category SENGAJA tidak ada di halaman ini — DEVELOPER_MODE
-    tidak ada di constants.py sama sekali (sudah dicek), sesuai kebijakan
-    v1.0 yang menyebut definisi toggle itu belum punya spec jelas."""
+    DEVELOPER_MODE TIDAK ADA di constants.py sama sekali (dikonfirmasi ulang
+    saat inspeksi v1.7) — jadi tombol 'Open Developer Dashboard' di bawah
+    BUKAN gated oleh mode/toggle/persistence apa pun (spec v1.7 §9/§29: 'Do
+    not invent a Developer Mode just to hide/show a page'). Tombol ini cuma
+    memancarkan Signal (open_developer_dashboard_requested) — SettingsPage
+    TIDAK menyimpan referensi ke DeveloperService/Companion sama sekali
+    (menjaga prinsip 'SettingsService needs NO reference to Companion/any
+    manager' tetap utuh); ui/window.py (yang sudah memegang
+    self._developer_service) yang membuka dialog-nya."""
+
+    open_developer_dashboard_requested = Signal()  # v1.7
 
     def __init__(self, settings_service: SettingsService):
         super().__init__()
@@ -95,6 +103,13 @@ class SettingsPage(QWidget):
         self._vtube_url_value = self._add_readonly_row(layout, "VTube Studio URL")
         self._vtube_config_value = self._add_readonly_row(layout, "Model Config Path")
         self._vtube_token_value = self._add_readonly_row(layout, "VTube Studio Token")
+
+        # ---------- Developer Tools (v1.7) ----------
+        layout.addWidget(self._section_label("Developer Tools"))
+        self._developer_button = QPushButton("Open Developer Dashboard")
+        self._developer_button.setObjectName("settingsSecondaryButton")
+        self._developer_button.clicked.connect(self.open_developer_dashboard_requested.emit)
+        layout.addWidget(self._developer_button, alignment=Qt.AlignLeft)
 
         layout.addStretch()
 

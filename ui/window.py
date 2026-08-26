@@ -29,6 +29,7 @@ from ui.settings_service import SettingsService  # <-- v1.4
 from ui.settings import SettingsPage  # <-- v1.4
 from ui.vision import VisionPage  # <-- v1.5
 from ui.routine import RoutinePage  # <-- v1.6
+from ui.developer import DeveloperDashboard  # <-- v1.7
 from ai.companion import Companion
 from vision.vision import Vision  # <-- v1.5.2: diteruskan langsung, lihat main_gui.py
 from ai.commands import is_command, run_command
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         self._worker: ChatWorker | None = None
         self._voice_worker: VoiceWorker | None = None
         self._speak_worker: SpeakWorker | None = None
+        self._developer_dashboard: DeveloperDashboard | None = None  # <-- v1.7: dibuat lazy, reused kalau sudah terbuka
 
         # ---------- VTube Studio / Avatar Initialization (sebelum VoiceManager) ----------
         vtube_client = VTubeStudioClient(
@@ -164,6 +166,7 @@ class MainWindow(QMainWindow):
         # SettingsManager that reaches into subsystems (Companion Rules §31).
         self._settings_service = SettingsService()
         self._settings_page = SettingsPage(self._settings_service)
+        self._settings_page.open_developer_dashboard_requested.connect(self._handle_open_developer_dashboard)
         # v1.5: VisionPage reuses self._companion directly — Vision.capture()/
         # analyze() already live inside Companion via capture_vision()/
         # current_vision_context(), no second Vision/ScreenCapture/ImageAnalyzer.
@@ -373,6 +376,18 @@ class MainWindow(QMainWindow):
 
     # ---------- Dialogs ----------
 
+    def _handle_open_developer_dashboard(self) -> None:
+        # v1.7: dialog non-modal, reused kalau sudah terbuka (bukan
+        # menumpuk instance baru tiap klik). DeveloperDashboard SUDAH
+        # menerima self._developer_service yang sudah ada sejak awal
+        # (dibuat di __init__ MainWindow) — TIDAK ada instance
+        # DeveloperService kedua.
+        if self._developer_dashboard is None:
+            self._developer_dashboard = DeveloperDashboard(self._developer_service, parent=self)
+        self._developer_dashboard.show()
+        self._developer_dashboard.raise_()
+        self._developer_dashboard.activateWindow()
+
     def _show_about(self) -> None:
         QMessageBox.information(
             self, "About", f"{APP_NAME} — AI Desktop Companion\nDitenagai oleh Gemini API."
@@ -389,5 +404,10 @@ class MainWindow(QMainWindow):
         # TIDAK BOLEH bertahan setelah aplikasi ditutup — shutdown() men-stop
         # thread-nya secara bersih (join dengan timeout).
         self._vision.shutdown()
+        # v1.7: pastikan QTimer polling Developer Dashboard (kalau sedang
+        # terbuka) ikut berhenti — closeEvent dialog TIDAK otomatis
+        # terpanggil hanya karena parent window ditutup.
+        if self._developer_dashboard is not None:
+            self._developer_dashboard.close()
         logger.info("Application closed.")
         event.accept()

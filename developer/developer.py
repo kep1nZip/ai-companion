@@ -79,7 +79,8 @@ class DeveloperService:
 
     def get_vision(self) -> VisionSnapshot:
         try:
-            return build_vision_snapshot(self._companion.current_vision_context())
+            mode = self._companion.get_vision_mode()
+            return build_vision_snapshot(self._companion.current_vision_context(), mode=mode)
         except Exception as e:
             logger.warning("Developer: gagal ambil vision snapshot: {}", e)
             return build_vision_snapshot(None)
@@ -89,7 +90,15 @@ class DeveloperService:
             pending = self._companion.get_pending_routine_events()
             last = self._companion.get_last_routine_event()
             schedule = self._companion.get_next_routine_schedule()
-            return build_routine_snapshot(pending, last, schedule)
+            enabled = self._companion.is_routine_enabled()
+            suppression = self._companion.get_routine_suppression()
+            history_count = len(self._companion.get_routine_history())
+            return build_routine_snapshot(
+                pending, last, schedule,
+                enabled=enabled,
+                last_suppression=suppression,
+                recent_history_count=history_count,
+            )
         except Exception as e:
             logger.warning("Developer: gagal ambil routine snapshot: {}", e)
             return None
