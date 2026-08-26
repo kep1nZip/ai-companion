@@ -180,7 +180,7 @@ class Companion:
             return None
         return self._vision.get_context()
 
-    # ---------- Routine (Developer Panel prep) ----------
+    # ---------- Routine (Developer Panel prep v0.9.5, Routine GUI v1.6) ----------
 
     def get_pending_routine_events(self) -> list[RoutineEvent]:
         return self._routine.get_pending_events() if self._routine else []
@@ -194,6 +194,26 @@ class Companion:
     def clear_routine_queue(self) -> None:
         if self._routine:
             self._routine.clear_queue()
+
+    def is_routine_enabled(self) -> bool:
+        """v1.6: False juga kalau Routine subsystem tidak diaktifkan sama
+        sekali saat konstruksi Companion (enable_routine=False) — bukan cuma
+        soal flag runtime di dalam Routine."""
+        return self._routine.is_enabled() if self._routine else False
+
+    def enable_routine(self) -> None:
+        if self._routine:
+            self._routine.enable()
+
+    def disable_routine(self) -> None:
+        if self._routine:
+            self._routine.disable()
+
+    def get_routine_history(self, limit: int = 10) -> list[RoutineEvent]:
+        return self._routine.get_recent_history(limit=limit) if self._routine else []
+
+    def get_routine_suppression(self) -> Optional[tuple]:
+        return self._routine.get_last_suppression() if self._routine else None
 
     # ---------- Initiative Developer Metrics passthrough ----------
 

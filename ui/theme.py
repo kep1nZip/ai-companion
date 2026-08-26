@@ -415,4 +415,63 @@ QLabel#visionStatusLabelAuto {
     font-size: 15px;
     font-weight: 700;
 }
+
+/* ---------- Routine GUI (v1.6) ---------- */
+
+QWidget#routinePage {
+    background-color: #1e1f26;
+}
+
+QLabel#routinePageTitle {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#routineSectionLabel {
+    color: #a0a3b0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding-top: 4px;
+}
+
+QLabel#routineStatusLabel {
+    color: #7fd48a;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#routineStatusLabelDisabled {
+    color: #a0a3b0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#routineErrorLabel {
+    color: #e88a8a;
+    font-size: 13px;
+}
+
+QFrame#routineCard {
+    background-color: #2c2e38;
+    border: 1px solid #33343f;
+    border-radius: 10px;
+    min-height: 40px;
+}
+
+QLabel#routineCardContent {
+    color: #e6e6e6;
+    font-size: 13px;
+}
+
+QPushButton#routineSecondaryButton {
+    background-color: transparent;
+    color: #e6e6e6;
+    border: 1px solid #3a3d4a;
+}
+
+QPushButton#routineSecondaryButton:hover {
+    background-color: #2c2e38;
+}
 """

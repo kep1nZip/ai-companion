@@ -28,6 +28,7 @@ from ui.avatar import AvatarPage  # <-- v1.3
 from ui.settings_service import SettingsService  # <-- v1.4
 from ui.settings import SettingsPage  # <-- v1.4
 from ui.vision import VisionPage  # <-- v1.5
+from ui.routine import RoutinePage  # <-- v1.6
 from ai.companion import Companion
 from vision.vision import Vision  # <-- v1.5.2: diteruskan langsung, lihat main_gui.py
 from ai.commands import is_command, run_command
@@ -171,12 +172,21 @@ class MainWindow(QMainWindow):
         # (set_mode/get_mode) — capture Manual/Auto tetap lewat Companion.
         self._vision_page = VisionPage(self._companion, self._vision)
 
+        # v1.6: RoutinePage reuses self._companion directly — semua akses ke
+        # Routine System (v0.8) lewat passthrough Companion yang SUDAH ADA
+        # (get_pending_routine_events/get_last_routine_event/
+        # get_next_routine_schedule/get_routine_history/get_routine_suppression/
+        # is_routine_enabled/enable_routine/disable_routine). TIDAK ADA
+        # RoutineEngine/RoutineScheduler kedua, TIDAK ada instance Routine baru.
+        self._routine_page = RoutinePage(self._companion)
+
         self._pages.addWidget(self._chat_page)
         self._pages.addWidget(self._memory_page)
         self._pages.addWidget(self._voice_page)
         self._pages.addWidget(self._avatar_page)
         self._pages.addWidget(self._settings_page)
         self._pages.addWidget(self._vision_page)
+        self._pages.addWidget(self._routine_page)
 
         root_layout.addWidget(self._pages, stretch=1)
 
@@ -234,6 +244,8 @@ class MainWindow(QMainWindow):
             self._pages.setCurrentWidget(self._settings_page)
         elif page_name == "vision":
             self._pages.setCurrentWidget(self._vision_page)
+        elif page_name == "routine":
+            self._pages.setCurrentWidget(self._routine_page)
 
     # ---------- Text Chat Actions ----------
 
