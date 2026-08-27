@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path  # <-- Tambahan Import
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from ui.chat import ChatArea
 from ui.chat_worker import ChatWorker
+from ui.autonomous_worker import AutonomousWorker  # <-- v1.8
 from ui.voice_worker import VoiceWorker
 from ui.speak_worker import SpeakWorker
 from ui.avatar_worker import AvatarWorker  # <-- Tambahan Import Avatar
@@ -58,6 +59,7 @@ class MainWindow(QMainWindow):
         self._worker: ChatWorker | None = None
         self._voice_worker: VoiceWorker | None = None
         self._speak_worker: SpeakWorker | None = None
+        self._autonomous_worker: AutonomousWorker | None = None  # <-- v1.8
         self._developer_dashboard: DeveloperDashboard | None = None  # <-- v1.7: dibuat lazy, reused kalau sudah terbuka
 
         # ---------- VTube Studio / Avatar Initialization (sebelum VoiceManager) ----------
@@ -195,6 +197,20 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
+        # v1.8 — Autonomous Interaction: timer periodik cuma untuk MENGECEK
+        # peluang (Routine.update()+Initiative.update(), murni in-memory,
+        # TIDAK ada panggilan Gemini di sini). Gemini HANYA dipanggil di
+        # dalam AutonomousWorker kalau Initiative benar-benar bilang YES —
+        # lihat _handle_autonomous_check(). 60 detik = interval CEK, bukan
+        # interval bicara — frekuensi bicara aktual tetap dibatasi penuh oleh
+        # cooldown/budget Initiative yang sudah ada (default 45 menit
+        # cooldown, maks 3/jam, 10/hari), jadi timer ini TIDAK menciptakan
+        # scheduler otonom baru, cuma titik pengecekan.
+        self._autonomous_timer = QTimer(self)
+        self._autonomous_timer.setInterval(60_000)
+        self._autonomous_timer.timeout.connect(self._handle_autonomous_check)
+        self._autonomous_timer.start()
+
     def _build_chat_page(self) -> QWidget:
         """Sama persis dengan content widget v1.0 sebelumnya — cuma dipindah
         jadi method terpisah supaya bisa dipasang sebagai satu page di
@@ -319,6 +335,40 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Error", 3000)
         self._set_text_input_enabled(True)
 
+    # ---------- Autonomous Interaction (v1.8) ----------
+
+    def _handle_autonomous_check(self) -> None:
+        # Companion sedang sibuk (chat/voice worker aktif) -> lewati siklus
+        # ini. Reuse flag busy yang SUDAH ADA (_set_text_input_enabled),
+        # bukan lock baru (spec §24: "reuse any existing processing lock").
+        if not self._input_box.isEnabled():
+            return
+        if self._autonomous_worker is not None and self._autonomous_worker.isRunning():
+            return  # siklus sebelumnya (jarang) masih berjalan -> jangan tumpuk
+
+        is_voice_active = self._voice_manager.state != VoiceState.IDLE
+        is_actively_typing = bool(self._input_box.text().strip())
+
+        self._autonomous_worker = AutonomousWorker(self._companion, is_voice_active, is_actively_typing)
+        self._autonomous_worker.result_ready.connect(self._on_autonomous_result)
+        self._autonomous_worker.start()
+
+    def _on_autonomous_result(self, reply: str) -> None:
+        if not reply:
+            return  # Initiative bilang NO, atau Gemini gagal -> Arona tetap diam (hasil valid & normal)
+
+        self._chat_area.add_message(reply, is_user=False)
+        self.statusBar().showMessage("Arona started a conversation", 3000)
+        logger.info("Autonomous Reply Delivered")
+
+        # Reuse PERSIS jalur output yang sama dengan reply user-initiated
+        # (TTS + Avatar reaction) — TIDAK ada jalur output otonom kedua.
+        self._speak_text(reply)
+        self._avatar_worker.request_reaction(reply)
+
+        behavior_state = self._companion.current_behavior_state()
+        self._avatar_worker.apply_mood(behavior_state.internal.mood.value)
+
     def _set_text_input_enabled(self, enabled: bool) -> None:
         self._input_box.setEnabled(enabled)
         self._send_button.setEnabled(enabled)
@@ -399,6 +449,7 @@ class MainWindow(QMainWindow):
     # ---------- Shutdown ----------
 
     def closeEvent(self, event) -> None:
+        self._autonomous_timer.stop()  # <-- v1.8: hentikan timer pengecekan otonom
         self._avatar_worker.stop_avatar()  # <-- Menghentikan worker avatar sebelum keluar
         # v1.5.2 spec §34/§48: scheduler Auto Vision (kalau sedang jalan)
         # TIDAK BOLEH bertahan setelah aplikasi ditutup — shutdown() men-stop

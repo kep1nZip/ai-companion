@@ -111,7 +111,18 @@ class Companion:
             logger.info("Gemini Reply")
             logger.info("Arona: {}", reply)
 
-            if routine_event and self._routine:
+            # BUGFIX: sebelumnya routine_event ditandai "completed" (masuk
+            # Recent History, mulai cooldown) HANYA karena Gemini berhasil
+            # membalas APA PUN — padahal Routine cuma dikirim sebagai
+            # "saran" (Routine Suggestion) yang Gemini bebas abaikan.
+            # Akibatnya: Stretch/Lunch Reminder bisa tercatat "selesai" di
+            # Recent History walau Arona sama sekali tidak menyinggungnya
+            # (mis. Teacher lagi ngobrol topik lain). Sekarang HANYA ditandai
+            # selesai kalau Initiative juga bilang ini momen yang pas untuk
+            # proaktif (decision_result.should_start) — kalau tidak, event
+            # tetap pending sampai expired atau sampai momen yang benar-benar
+            # kondusif tiba.
+            if routine_event and self._routine and decision_result and decision_result.should_start:
                 self._routine.mark_completed(routine_event)
             if decision_result and decision_result.should_start and self._initiative:
                 self._initiative.mark_started()
@@ -133,6 +144,66 @@ class Companion:
 
         self._remember_if_useful(user_input)
         return reply
+
+    def check_autonomous_opportunity(
+        self, is_voice_active: bool = False, is_actively_typing: bool = False
+    ) -> Optional[str]:
+        """v1.8 — Autonomous Interaction Pipeline. Dipanggil TANPA user_input,
+        dari trigger periodik GUI (lihat ui/window.py). BUKAN orchestrator
+        kedua — reuse persis subsystem yang sama dengan chat() (Behavior read,
+        Routine.update(), Vision.get_context(), Initiative.update(),
+        ContextBuilder, Gemini, Conversation). Bedanya cuma dua: (1) tidak ada
+        pesan Teacher yang ditambahkan ke history karena memang Teacher tidak
+        mengetik apa pun, (2) Gemini HANYA dipanggil kalau
+        decision_result.should_start == True (Autonomous Permission Policy —
+        'Initiative decides whether Arona may speak. Gemini decides what
+        Arona says.'). Return None berarti Arona tetap diam — ini hasil yang
+        VALID dan diharapkan di sebagian besar pemanggilan."""
+        if self._initiative is None:
+            return None
+
+        behavior_state = self.current_behavior_state()
+        vision_context = self._vision.get_context() if self._vision else None
+        routine_event = (
+            self._timed("routine_update", lambda: self._routine.update(behavior_state, vision_context))
+            if self._routine else None
+        )
+
+        decision_result = self._timed(
+            "initiative_update",
+            lambda: self._initiative.update(
+                behavior_state, vision_context, routine_event,
+                is_voice_active=is_voice_active, is_actively_typing=is_actively_typing,
+            ),
+        )
+
+        if not decision_result.should_start:
+            return None
+
+        contents = self._build_autonomous_contents(behavior_state, vision_context, routine_event, decision_result)
+        if not contents:
+            logger.warning("Autonomous context kosong, batal bicara.")
+            return None
+
+        try:
+            logger.info("Gemini Request (Autonomous)")
+            reply = self._timed("gemini", lambda: self._gemini.send(contents))
+            self._conversation.add_assistant_message(reply)
+            logger.info("Gemini Reply (Autonomous)")
+            logger.info("Arona (Autonomous): {}", reply)
+
+            if routine_event and self._routine:
+                self._routine.mark_completed(routine_event)
+            self._initiative.mark_started()
+
+            return reply
+
+        except (GeminiResponseError, ClientError) as e:
+            # v1.8 §30: kegagalan otonom TIDAK BOLEH crash & TIDAK BOLEH
+            # menampilkan pesan error ke Teacher (Teacher tidak meminta apa
+            # pun) — log, tetap diam, tunggu kesempatan berikutnya.
+            logger.warning("Autonomous Gemini call gagal, tetap diam: {}", e)
+            return None
 
     # ---------- Conversation ----------
 
@@ -298,6 +369,68 @@ class Companion:
 
         contents.extend(history)
         logger.info("Ephemeral Context Injected")
+        return contents
+
+    def _build_autonomous_contents(
+        self,
+        behavior_state: BehaviorState,
+        vision_context: Optional[VisionContext] = None,
+        routine_event: Optional[RoutineEvent] = None,
+        decision_result: Optional[DecisionResult] = None,
+    ) -> list[types.Content]:
+        """v1.8: sama seperti _build_contents(), TAPI ephemeral+memory context
+        diletakkan SETELAH history (bukan sebelum). Untuk giliran otonom TIDAK
+        ADA pesan Teacher baru yang masuk history, jadi content PALING AKHIR
+        harus role='user' supaya Gemini punya 'giliran saat ini' yang jelas
+        untuk direspons — kalau posisinya sama seperti _build_contents() biasa
+        (ephemeral di awal), giliran terakhir bisa jadi role='model' (balasan
+        Arona sebelumnya) yang membingungkan Gemini. ContextBuilder TETAP
+        satu-satunya sumber teksnya (reuse self._context_builder.build() apa
+        adanya, TIDAK diduplikasi) — ini murni keputusan URUTAN di level
+        Companion, orchestrator tetap satu."""
+        history = self._conversation.get_history()
+        contents: list[types.Content] = list(history)
+
+        try:
+            ephemeral_text = self._context_builder.build(
+                behavior_state,
+                vision_context=vision_context,
+                routine_event=routine_event,
+                decision_result=decision_result,
+            )
+        except Exception as e:
+            logger.warning("Gagal membangun autonomous context, batal bicara: {}", e)
+            return []
+
+        try:
+            memories = self._timed("memory_query", lambda: self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT))
+            memory_text = _format_memories(memories)
+        except Exception as e:
+            logger.warning("Gagal memuat memori (autonomous), lanjut tanpa memori: {}", e)
+            memory_text = ""
+
+        if memory_text:
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=f"[Konteks memori — bukan pesan langsung dari Teacher]\n{memory_text}")],
+                )
+            )
+
+        autonomous_note = (
+            "[Autonomous check-in — bukan pesan Teacher. Teacher belum mengatakan "
+            "apa-apa saat ini. Initiative & Routine memberi sinyal bahwa momen ini "
+            "wajar untuk Arona memulai obrolan singkat secara natural, sesuai "
+            "konteks di atas. Kalau tidak ada yang perlu dikatakan, respons singkat "
+            "dan hangat tetap lebih baik daripada dipaksakan.]"
+        )
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part(text=f"{ephemeral_text}\n\n{autonomous_note}")],
+            )
+        )
+        logger.info("Context Generated (Autonomous)")
         return contents
 
     def _remember_if_useful(self, user_input: str) -> None:
