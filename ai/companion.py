@@ -4,11 +4,11 @@ import re
 from typing import Optional
 
 from google.genai import types
-from google.genai.errors import ClientError
 
 from ai.personality import load_prompts
 from ai.prompt_builder import build_system_prompt
-from ai.gemini import GeminiClient, GeminiResponseError
+from ai.providers.base import LanguageModelProvider, ProviderError, ProviderRateLimitError, ProviderResponseError
+from ai.providers.gemini_provider import GeminiProvider
 from ai.conversation import Conversation
 from ai.memory_extractor import MemoryExtractor
 from ai.context_builder import ContextBuilder
@@ -56,11 +56,19 @@ class Companion:
         enable_routine: bool = True,
         enable_initiative: bool = True,
         performance_tracker: Optional[PerformanceTracker] = None,
+        provider: Optional[LanguageModelProvider] = None,
     ):
         prompts = load_prompts()
         system_prompt = build_system_prompt(prompts)
 
-        self._gemini = GeminiClient(
+        # v2.0 §35: Companion sekarang bergantung pada LanguageModelProvider
+        # (abstrak), TIDAK PERNAH pada GeminiClient secara langsung. Default
+        # tetap GeminiProvider (Gemini TIDAK dihapus, cuma jadi salah satu
+        # implementasi) — parameter `provider` opsional supaya provider lain
+        # (local/free, masih di luar cakupan v2.0 langkah ini) bisa disuntik
+        # nanti TANPA mengubah Companion lagi. Konstruktor lama yang tidak
+        # mengisi `provider` tetap jalan persis seperti sebelumnya.
+        self._gemini: LanguageModelProvider = provider or GeminiProvider(
             api_key=GEMINI_API_KEY,
             model_name=MODEL_NAME,
             system_prompt=system_prompt,
@@ -107,7 +115,7 @@ class Companion:
 
         try:
             logger.info("Gemini Request")
-            reply = self._timed("gemini", lambda: self._gemini.send(contents))
+            reply = self._timed("gemini", lambda: self._gemini.generate(contents))
             self._conversation.add_assistant_message(reply)
             logger.info("Gemini Reply")
             logger.info("Arona: {}", reply)
@@ -128,19 +136,26 @@ class Companion:
             if decision_result and decision_result.should_start and self._initiative:
                 self._initiative.mark_started()
 
-        except GeminiResponseError as e:
+        # v2.0: Companion sekarang cuma menangkap exception PROVIDER-AGNOSTIC
+        # (ai/providers/base.py) — logic deteksi "429"/dsb sudah pindah ke
+        # dalam GeminiProvider (v2.0 §34: itu tanggung jawab provider, bukan
+        # Companion). Kalau nanti provider lain (local) aktif, blok except
+        # ini TIDAK PERLU diubah sama sekali.
+        except ProviderResponseError as e:
             self._conversation.rollback_last_message()
-            logger.warning("Balasan Gemini kosong, pesan Teacher di-rollback: {}", e)
+            logger.warning("Balasan provider kosong, pesan Teacher di-rollback: {}", e)
             raise CompanionError(
                 "Arona kehabisan kata-kata sesaat, Teacher... coba ulangi lagi ya."
             ) from e
 
-        except ClientError as e:
+        except ProviderRateLimitError as e:
             self._conversation.rollback_last_message()
-            if "429" in str(e):
-                logger.warning("Rate limit hit: {}", e)
-                raise RateLimitError(str(e)) from e
-            logger.error("Gemini ClientError: {}", e)
+            logger.warning("Rate limit hit: {}", e)
+            raise RateLimitError(str(e)) from e
+
+        except ProviderError as e:
+            self._conversation.rollback_last_message()
+            logger.error("Provider error: {}", e)
             raise CompanionError(str(e)) from e
 
         self._remember_if_useful(user_input)
@@ -188,7 +203,7 @@ class Companion:
 
         try:
             logger.info("Gemini Request (Autonomous)")
-            reply = self._timed("gemini", lambda: self._gemini.send(contents))
+            reply = self._timed("gemini", lambda: self._gemini.generate(contents))
             self._conversation.add_assistant_message(reply)
             logger.info("Gemini Reply (Autonomous)")
             logger.info("Arona (Autonomous): {}", reply)
@@ -199,10 +214,13 @@ class Companion:
 
             return reply
 
-        except (GeminiResponseError, ClientError) as e:
+        except ProviderError as e:
             # v1.8 §30: kegagalan otonom TIDAK BOLEH crash & TIDAK BOLEH
             # menampilkan pesan error ke Teacher (Teacher tidak meminta apa
-            # pun) — log, tetap diam, tunggu kesempatan berikutnya.
+            # pun) — log, tetap diam, tunggu kesempatan berikutnya. v2.0:
+            # ProviderError adalah base class ProviderResponseError/
+            # ProviderRateLimitError, jadi satu except ini menangkap semuanya
+            # persis seperti (GeminiResponseError, ClientError) sebelumnya.
             logger.warning("Autonomous Gemini call gagal, tetap diam: {}", e)
             return None
 
