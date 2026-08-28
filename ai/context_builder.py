@@ -28,7 +28,17 @@ class ContextBuilder:
     bukan instruksi yang mendikte kalimat Arona (Routine Decision Policy,
     Autonomous Permission Policy) — Gemini yang memutuskan bagaimana
     meresponsnya. Initiative section malah tidak pernah muncul sama sekali
-    kecuali `decision_result.should_start == True`."""
+    kecuali `decision_result.should_start == True`.
+
+    v1.9 (Companion Intelligence — Routine Relevance §10): Routine Suggestion
+    section SEKARANG JUGA cuma muncul kalau `decision_result.should_start ==
+    True` — sebelumnya routine_event yang masih pending SELALU ditempel ke
+    context apa pun topik obrolannya (mis. reminder minum air nyempil di
+    tengah pertanyaan debug Python). Initiative sudah menjadi 'apakah momen
+    ini pas untuk hal kasual seperti ini' — reuse gate itu, bukan bikin
+    intent classifier baru. Untuk giliran otonom (v1.8) ini TIDAK berubah
+    perilakunya sama sekali, karena should_start SUDAH PASTI True di sana
+    sebelum ContextBuilder.build() dipanggil."""
 
     def __init__(self, timezone_name: str = "Asia/Jakarta"):
         self._timezone_name = timezone_name
@@ -50,10 +60,12 @@ class ContextBuilder:
         if vision_context is not None:
             sections.append(self._format_vision(vision_context))
 
-        if routine_event is not None:
+        should_start = decision_result is not None and decision_result.should_start
+
+        if routine_event is not None and should_start:
             sections.append(self._format_routine(routine_event))
 
-        if decision_result is not None and decision_result.should_start:
+        if should_start:
             sections.append(self._format_initiative(decision_result))
 
         return "\n\n".join(s for s in sections if s)

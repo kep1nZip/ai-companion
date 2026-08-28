@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from google.genai import types
@@ -102,7 +103,7 @@ class Companion:
             if self._initiative else None
         )
 
-        contents = self._build_contents(behavior_state, vision_context, routine_event, decision_result)
+        contents = self._build_contents(user_input, behavior_state, vision_context, routine_event, decision_result)
 
         try:
             logger.info("Gemini Request")
@@ -326,6 +327,7 @@ class Companion:
 
     def _build_contents(
         self,
+        user_input: str,
         behavior_state: BehaviorState,
         vision_context: Optional[VisionContext] = None,
         routine_event: Optional[RoutineEvent] = None,
@@ -333,7 +335,11 @@ class Companion:
     ) -> list[types.Content]:
         """SATU-SATUNYA definisi _build_contents (sebelumnya ada 3 definisi
         duplikat menumpuk di file — cuma yang terakhir yang benar-benar terpakai
-        oleh Python, sisanya kode mati. Sudah dikonsolidasi di sini)."""
+        oleh Python, sisanya kode mati. Sudah dikonsolidasi di sini).
+
+        v1.9: `user_input` sekarang diteruskan supaya bisa dipakai
+        `_select_relevant_memories()` — sebelumnya method ini blind-load N
+        memori terbaru tanpa peduli topik pesan Teacher."""
         history = self._conversation.get_history()
         contents: list[types.Content] = []
 
@@ -355,7 +361,7 @@ class Companion:
             logger.warning("Gagal membangun ephemeral context, lanjut tanpa itu: {}", e)
 
         try:
-            memories = self._timed("memory_query", lambda: self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT))
+            memories = self._timed("memory_query", lambda: self._select_relevant_memories(user_input))
             memory_text = _format_memories(memories)
             if memory_text:
                 contents.append(
@@ -370,6 +376,45 @@ class Companion:
         contents.extend(history)
         logger.info("Ephemeral Context Injected")
         return contents
+
+    def _select_relevant_memories(self, user_input: str) -> list[Memory]:
+        """v1.9 Companion Intelligence — Memory Relevance (§8). Sebelumnya
+        SELALU load N memori TERBARU tanpa peduli topik pesan Teacher saat
+        ini — jadi memori project lama bisa nyempil di obrolan santai, atau
+        sebaliknya. Sekarang pakai `search_memory()` yang SUDAH ADA sejak
+        v1.1 (SQL LIKE, dipakai juga oleh Memory GUI search) — TIDAK ada
+        search engine/Vector DB/RAG baru (spec eksplisit melarang).
+
+        `search_memory()` mencocokkan SATU string utuh sebagai substring,
+        bukan multi-kata — jadi di sini dipanggil PER KATA signifikan dari
+        pesan Teacher (kata >= 4 huruf, heuristik sederhana buat menyaring
+        kata sambung pendek seperti 'aku'/'kamu'/'ini'), hasilnya
+        digabung+dedupe. Kalau nol match sama sekali, fallback ke N-terbaru
+        (perilaku lama) — supaya tidak tiba-tiba context memori kosong total
+        untuk pesan yang memang tidak mengandung kata kunci apa pun."""
+        keywords = [w for w in re.findall(r"\w+", user_input.lower()) if len(w) >= 4]
+
+        seen_ids: set[int] = set()
+        relevant: list[Memory] = []
+        for word in keywords[:5]:  # batasi jumlah query per pesan
+            try:
+                matches = self._memory_manager.search_memory(word, limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
+            except Exception as e:
+                logger.warning("Memory relevance search gagal untuk kata '{}': {}", word, e)
+                continue
+            for m in matches:
+                if m.id not in seen_ids:
+                    seen_ids.add(m.id)
+                    relevant.append(m)
+            if len(relevant) >= EPHEMERAL_CONTEXT_MEMORY_LIMIT:
+                break
+
+        if relevant:
+            logger.info("Memory Relevance: {} match ditemukan", len(relevant))
+            return relevant[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
+
+        logger.info("Memory Relevance: tidak ada match, fallback ke recency")
+        return self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
 
     def _build_autonomous_contents(
         self,

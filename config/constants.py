@@ -2,7 +2,7 @@ from __future__ import annotations
 
 APP_NAME = "Arona"
 VERSION = "1.5.2"
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.6-flash"
 TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
 TTS_VOICE_NAME = "Zephyr"
 STT_MODEL_SIZE = "medium"
@@ -32,7 +32,7 @@ IDLE_DOUBLE_BLINK_CHANCE = 0.1
 IDLE_BREATHING_CYCLE_SECONDS = 4.0
 IDLE_BREATHING_AMPLITUDE = 0.5
 
-VISION_MODEL_NAME = "gemini-2.5-flash"
+VISION_MODEL_NAME = "gemini-3.6-flash"
 VISION_DEFAULT_TTL = 30.0
 # v1.5.2 §10/§45: konstanta runtime statis, BUKAN field Settings yang bisa
 # diedit — spec eksplisit melarang bikin VisionIntervalConfig baru hanya
