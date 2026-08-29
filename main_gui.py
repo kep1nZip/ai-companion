@@ -3,7 +3,11 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from ai.companion import Companion
-from config.settings import GEMINI_API_KEY
+from ai.personality import load_prompts
+from ai.prompt_builder import build_system_prompt
+from ai.providers.gemini_provider import GeminiProvider
+from ai.providers.local_provider import LocalProvider
+from config.settings import GEMINI_API_KEY, AI_PROVIDER, LOCAL_PROVIDER_BASE_URL, LOCAL_PROVIDER_MODEL_NAME
 from ui.window import MainWindow
 from ui.theme import DARK_STYLESHEET
 from config.constants import APP_NAME, VERSION, MODEL_NAME
@@ -31,12 +35,32 @@ def main() -> None:
 
     performance_tracker = PerformanceTracker()
 
+    # v2.0 — Provider Selection (§46 Step 6/9). Default tetap Gemini (Gemini
+    # TIDAK dihapus, cuma jadi salah satu opsi) — ganti AI_PROVIDER=local di
+    # .env kalau mau pakai LM Studio. System prompt dibangun sekali di sini
+    # lewat pipeline yang SAMA (load_prompts + build_system_prompt) yang
+    # dipakai Companion untuk provider default-nya sendiri — tidak ada
+    # logic persona kedua.
+    if AI_PROVIDER == "local":
+        prompts = load_prompts()
+        system_prompt = build_system_prompt(prompts)
+        provider = LocalProvider(
+            system_prompt=system_prompt,
+            model_name=LOCAL_PROVIDER_MODEL_NAME,
+            base_url=LOCAL_PROVIDER_BASE_URL,
+        )
+        logger.info("AI Provider: LOCAL ({} @ {})", LOCAL_PROVIDER_MODEL_NAME, LOCAL_PROVIDER_BASE_URL)
+    else:
+        provider = None  # Companion akan membuat GeminiProvider default-nya sendiri
+        logger.info("AI Provider: GEMINI ({})", MODEL_NAME)
+
     companion = Companion(
         vision=vision,
         performance_tracker=performance_tracker,
+        provider=provider,
     )
 
-    logger.info("Companion backend ready. Model: {}", MODEL_NAME)
+    logger.info("Companion backend ready.")
 
     # v1.5.2: `vision` diteruskan LANGSUNG ke MainWindow (bukan cuma lewat
     # Companion) supaya VisionPage bisa memanggil vision.set_mode()/
