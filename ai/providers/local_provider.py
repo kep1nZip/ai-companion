@@ -46,11 +46,28 @@ class LocalProvider(LanguageModelProvider):
         model_name: str,
         base_url: str = "http://localhost:1234/v1",
         timeout: float = 120.0,
+        temperature: float = 0.7,
+        frequency_penalty: float = 0.4,
+        presence_penalty: float = 0.4,
     ):
         self._system_prompt = system_prompt
         self._model_name = model_name
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        # v2.0 Step 7 (temuan Teacher): sebelumnya TIDAK ADA parameter sampling
+        # apa pun dikirim ke local server — LM Studio jatuh ke default
+        # internalnya sendiri, yang di model 8B terbukti gampang jatuh ke pola
+        # berulang ("ya~", "Arona nggak boleh lupa, ya~" diulang tiap giliran).
+        # GeminiClient (ai/gemini.py) juga tidak set parameter ini secara
+        # eksplisit — tapi Gemini flagship jauh lebih baik ikut instruksi
+        # "Avoid repetitive catchphrases" di speaking_style.txt tanpa bantuan
+        # parameter. Default di sini SENGAJA dipilih moderat (bukan ekstrem)
+        # buat mengurangi looping kalimat tanpa bikin balasan jadi kacau —
+        # tetap dijadikan parameter, bukan hardcoded, supaya Teacher bisa
+        # tuning sendiri kalau masih kurang/kebanyakan.
+        self._temperature = temperature
+        self._frequency_penalty = frequency_penalty
+        self._presence_penalty = presence_penalty
 
     def generate(self, contents: list[types.Content]) -> str:
         # Terjemahkan list[types.Content] (format Gemini SDK, role "user"/
@@ -64,10 +81,18 @@ class LocalProvider(LanguageModelProvider):
             text = content.parts[0].text if content.parts else ""
             messages.append({"role": role, "content": text})
 
+        payload = {
+            "model": self._model_name,
+            "messages": messages,
+            "temperature": self._temperature,
+            "frequency_penalty": self._frequency_penalty,
+            "presence_penalty": self._presence_penalty,
+        }
+
         try:
             response = requests.post(
                 f"{self._base_url}/chat/completions",
-                json={"model": self._model_name, "messages": messages},
+                json=payload,
                 timeout=self._timeout,
             )
         except requests.exceptions.ConnectionError as e:
