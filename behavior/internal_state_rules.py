@@ -11,7 +11,12 @@ from config.logger import logger
 
 _MAX_STEP = 5  # Update Policy: no sudden jumps, ±5 = maksimum & jarang
 
-_POSITIVE_EMOTIONS = {Emotion.HAPPY, Emotion.EXCITED, Emotion.PROUD, Emotion.SURPRISED}
+# EMBARRASSED dimasukkan ke sini (permintaan Teacher) karena reaksi malu-malu
+# Arona akibat digoda/dimanja itu tonally positif (dia menikmati interaksinya,
+# cuma tersipu), bukan emosi negatif — sebelumnya EMBARRASSED tidak masuk
+# himpunan mana pun, jadi rentetan interaksi flirty/manja TIDAK PERNAH bisa
+# menggeser Mood ke arah mana pun (streak-nya tidak pernah dihitung).
+_POSITIVE_EMOTIONS = {Emotion.HAPPY, Emotion.EXCITED, Emotion.PROUD, Emotion.SURPRISED, Emotion.EMBARRASSED}
 _NEGATIVE_EMOTIONS = {Emotion.SAD, Emotion.WORRIED}
 _MOOD_STREAK_THRESHOLD = 3  # butuh 3 emosi searah BERTURUT-TURUT sebelum mood ikut bergeser
 

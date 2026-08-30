@@ -111,14 +111,14 @@ Semua yang ada di Bagian 6 — bukan "gagal", tapi genuinely belum bisa saya jal
 Saya tidak bisa mengklaim ini "lolos" tanpa Teacher benar-benar mencobanya. Centang manual:
 
 ### 6.1 — Test yang butuh hardware audio/avatar nyata
-- [X] **T10 Voice Input**: bicara ke mic dengan `AI_PROVIDER=local` aktif → STT → balasan lewat LocalProvider → Gemini TTS bersuara normal.
+- [✅] **T10 Voice Input**: bicara ke mic dengan `AI_PROVIDER=local` aktif → STT → balasan lewat LocalProvider → Gemini TTS bersuara normal.
 - [✅] **T11 Voice + Vision**: Vision ON, ngobrol lewat suara → pastikan hybrid (Vision=Gemini, Chat=Local) tidak saling ganggu/lag aneh.
 - [✅] **T12 Avatar Reaction**: setelah balasan local, buka VTube Studio — cek expression/halo/lip sync/idle animation semua jalan seperti biasa dengan balasan dari local model.
 - [✅] **T14 Settings GUI**: buka Settings, cek API Key show/hide/save Gemini masih normal (harus tetap ada karena Vision/Memory masih Gemini).
 
 ### 6.2 — Autonomous & Routine di real usage
-- [X] Biarkan idle sampai ada Routine+Initiative opportunity asli (bukan dipaksa lewat test) → autonomous reply beneran keluar dari local model, sampai ke TTS+Avatar.
-- [X] Pastikan tidak spam — 1x autonomous reply lalu diam sesuai cooldown, tidak nembak berkali-kali.
+- [✅] Biarkan idle sampai ada Routine+Initiative opportunity asli (bukan dipaksa lewat test) → autonomous reply beneran keluar dari local model, sampai ke TTS+Avatar.
+- [✅] Pastikan tidak spam — 1x autonomous reply lalu diam sesuai cooldown, tidak nembak berkali-kali.
 
 ### 6.3 — Performance real
 Jalankan minimal (§30):

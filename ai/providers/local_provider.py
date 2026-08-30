@@ -46,7 +46,7 @@ class LocalProvider(LanguageModelProvider):
         model_name: str,
         base_url: str = "http://localhost:1234/v1",
         timeout: float = 120.0,
-        temperature: float = 0.7,
+        temperature: float = 0.85,
         frequency_penalty: float = 0.4,
         presence_penalty: float = 0.4,
     ):
@@ -65,6 +65,26 @@ class LocalProvider(LanguageModelProvider):
         # buat mengurangi looping kalimat tanpa bikin balasan jadi kacau —
         # tetap dijadikan parameter, bukan hardcoded, supaya Teacher bisa
         # tuning sendiri kalau masih kurang/kebanyakan.
+        #
+        # PENTING (temuan lanjutan): frequency_penalty/presence_penalty di
+        # API bergaya OpenAI cuma menekan token yang SUDAH di-generate DI
+        # DALAM completion yang sedang berjalan — TIDAK menekan pola yang
+        # datang dari conversation HISTORY (balasan Arona sendiri di turn2
+        # sebelumnya, yang ikut terkirim sebagai input tiap request baru).
+        # Itu sebabnya, meski dua parameter itu sudah di-set, Arona masih
+        # bisa "kepancing" ngulang blok kalimat yang sama persis dari
+        # balasannya sendiri beberapa turn sebelumnya (self-reinforcing loop,
+        # makin lama makin kuat). Temperature dinaikkan (0.7 -> 0.85) sebagai
+        # mitigasi paling langsung untuk pola spesifik ini — menambah
+        # keacakan supaya model tidak selalu memilih lanjutan paling mungkin
+        # (yang cenderung mengarah ke pola yang sudah sering muncul di
+        # context). Ini BUKAN solusi sempurna — kalau riwayat percakapan
+        # makin panjang dan makin banyak pola berulang menumpuk di context,
+        # kecenderungan ini bisa muncul lagi. Mitigasi lebih dalam (mis.
+        # membatasi jumlah history yang dikirim ke Local provider) sengaja
+        # BELUM diimplementasikan di sini karena butuh keputusan trade-off
+        # (kontinuitas obrolan vs kesegaran) yang sebaiknya Teacher pilih
+        # sendiri, bukan di-assume sepihak.
         self._temperature = temperature
         self._frequency_penalty = frequency_penalty
         self._presence_penalty = presence_penalty
