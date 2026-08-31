@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QComboBox,
 )
 
 from ui.settings_service import SettingsService, SettingsSaveError
@@ -21,13 +22,28 @@ class SettingsPage(QWidget):
     backend sama sekali.
 
     Hasil inspeksi (config/constants.py, config/settings.py) menunjukkan
-    HANYA SATU field yang benar-benar punya mekanisme persistence/runtime
-    yang nyata: GEMINI_API_KEY (lewat .env). Semua field lain di halaman ini
-    Read Only — bukan karena belum sempat dibuat editable, tapi karena
-    memang tidak ada setter/persistence contract untuk field itu di source
-    aktual (Model, TTS Model/Voice, STT Model Size, VTube Studio URL, Model
+    HANYA field yang benar-benar punya mekanisme persistence/runtime nyata
+    yang editable: GEMINI_API_KEY, dan (v2.0 Step 9) AI_PROVIDER +
+    LOCAL_PROVIDER_MODEL_NAME — semuanya lewat .env. Semua field lain di
+    halaman ini Read Only — bukan karena belum sempat dibuat editable, tapi
+    karena memang tidak ada setter/persistence contract untuk field itu di
+    source aktual (TTS Model/Voice, STT Model Size, VTube Studio URL, Model
     Config Path semuanya konstanta murni di constants.py, dipakai sekali saat
     construct object masing-masing subsystem, tanpa reload mechanism).
+
+    v2.0 Step 9 §10-11: provider di-construct SEKALI saat startup
+    (main_gui.py) — TIDAK ADA hot-swap. Mengubah 'Language Provider' di sini
+    cuma menyimpan ke .env dan WAJIB restart untuk berlaku, sama persis
+    seperti API Key sudah bekerja sejak v1.4. §7: UI mengikuti mockup resmi
+    spec (Provider dropdown, Model, Status) — TIDAK menambah Base URL atau
+    field lain yang tidak diminta.
+
+    Dirty-state DIPISAH per section (API Key vs Provider) — supaya klik
+    Apply karena ganti Provider saja TIDAK ikut mencoba nyimpen API Key
+    kosong (dan sebaliknya). Kedua section tetap berbagi SATU tombol
+    Apply/Cancel (spec: 'Do not redesign Settings' — bukan bikin footer per
+    section), tapi _handle_apply() cuma menyimpan section yang benar2
+    diubah.
 
     DEVELOPER_MODE TIDAK ADA di constants.py sama sekali (dikonfirmasi ulang
     saat inspeksi v1.7) — jadi tombol 'Open Developer Dashboard' di bawah
@@ -46,6 +62,8 @@ class SettingsPage(QWidget):
         self.setObjectName("settingsPage")
         self._service = settings_service
         self._is_revealed = False
+        self._api_key_dirty = False
+        self._provider_dirty = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -73,7 +91,31 @@ class SettingsPage(QWidget):
 
         # ---------- AI ----------
         layout.addWidget(self._section_label("AI"))
-        self._model_value = self._add_readonly_row(layout, "Model")
+
+        provider_row = QHBoxLayout()
+        provider_label = QLabel("Language Provider")
+        provider_label.setObjectName("settingsFieldLabel")
+        provider_row.addWidget(provider_label)
+
+        self._provider_combo = QComboBox()
+        # v2.0 Step 9 §8: cuma provider yang BENERAN diimplementasikan.
+        self._provider_combo.addItems(["Local", "Gemini"])
+        self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        provider_row.addWidget(self._provider_combo, stretch=1)
+        layout.addLayout(provider_row)
+
+        self._local_model_row_label = QLabel("Local Model")
+        self._local_model_row_label.setObjectName("settingsFieldLabel")
+        local_model_row = QHBoxLayout()
+        local_model_row.addWidget(self._local_model_row_label)
+        self._local_model_input = QLineEdit()
+        self._local_model_input.textEdited.connect(self._on_provider_field_edited)
+        local_model_row.addWidget(self._local_model_input, stretch=1)
+        layout.addLayout(local_model_row)
+
+        self._provider_status_value = self._add_readonly_row(layout, "Status")
+
+        self._model_value = self._add_readonly_row(layout, "Gemini Model")
 
         api_key_row = QHBoxLayout()
         api_key_label = QLabel("API Key")
@@ -183,8 +225,36 @@ class SettingsPage(QWidget):
             "•" * 16 if snapshot.api_key_configured else "Not configured"
         )
 
+        # v2.0 Step 9: reset tampilan provider dari snapshot (bukan dari state
+        # UI lama) setiap kali halaman ini dibuka — konsisten dengan pola
+        # re-masking API key di atas.
+        self._provider_combo.blockSignals(True)
+        self._provider_combo.setCurrentText(snapshot.ai_provider.capitalize())
+        self._provider_combo.blockSignals(False)
+        self._local_model_input.blockSignals(True)
+        self._local_model_input.setText(snapshot.local_provider_model_name)
+        self._local_model_input.blockSignals(False)
+        self._update_provider_field_visibility(snapshot.ai_provider)
+        self._update_provider_status(snapshot.ai_provider)
+
         self._error_label.hide()
-        self._set_dirty(False)
+        self._api_key_dirty = False
+        self._provider_dirty = False
+        self._sync_dirty_ui()
+
+    def _update_provider_field_visibility(self, provider: str) -> None:
+        is_local = provider.strip().lower() == "local"
+        self._local_model_row_label.setVisible(is_local)
+        self._local_model_input.setVisible(is_local)
+
+    def _update_provider_status(self, provider: str) -> None:
+        # v2.0 Step 9 §27/§12: status ini murni "config-nya kelihatan masuk
+        # akal" (non-empty), BUKAN klaim koneksi live tervalidasi — TIDAK ada
+        # health-check subsystem baru dibuat untuk ini.
+        if provider.strip().lower() == "local":
+            self._provider_status_value.setText("● Local provider configured")
+        else:
+            self._provider_status_value.setText("● Gemini provider configured")
 
     # ---------- API Key actions ----------
 
@@ -203,9 +273,24 @@ class SettingsPage(QWidget):
         self._is_revealed = True
 
     def _on_api_key_edited(self, _text: str) -> None:
-        self._set_dirty(True)
+        self._api_key_dirty = True
+        self._sync_dirty_ui()
 
-    def _set_dirty(self, dirty: bool) -> None:
+    # ---------- Provider actions (v2.0 Step 9) ----------
+
+    def _on_provider_changed(self, _index: int) -> None:
+        self._update_provider_field_visibility(self._provider_combo.currentText())
+        self._provider_dirty = True
+        self._sync_dirty_ui()
+
+    def _on_provider_field_edited(self, _text: str) -> None:
+        self._provider_dirty = True
+        self._sync_dirty_ui()
+
+    # ---------- Shared dirty state ----------
+
+    def _sync_dirty_ui(self) -> None:
+        dirty = self._api_key_dirty or self._provider_dirty
         self._apply_button.setEnabled(dirty)
         self._cancel_button.setEnabled(dirty)
         self._restart_label.setVisible(dirty)
@@ -216,14 +301,28 @@ class SettingsPage(QWidget):
         self._load_snapshot()
 
     def _handle_apply(self) -> None:
-        new_value = self._api_key_input.text()
-        try:
-            self._service.save_api_key(new_value)
-        except SettingsSaveError as e:
-            self._show_error(str(e))
-            return
+        # v2.0 Step 9: cuma simpan section yang BENERAN diubah — supaya ganti
+        # Provider saja tidak ikut mencoba nyimpen API Key kosong, dan
+        # sebaliknya (lihat catatan dirty-state terpisah di docstring class).
+        if self._api_key_dirty:
+            try:
+                self._service.save_api_key(self._api_key_input.text())
+            except SettingsSaveError as e:
+                self._show_error(str(e))
+                return
 
-        logger.info("Settings GUI: API key diperbarui, restart dibutuhkan.")
+        if self._provider_dirty:
+            try:
+                self._service.save_provider_settings(
+                    provider=self._provider_combo.currentText(),
+                    local_model_name=self._local_model_input.text(),
+                )
+            except SettingsSaveError as e:
+                self._show_error(str(e))
+                return
+            logger.info("Settings GUI: AI provider diperbarui, restart dibutuhkan.")
+
+        logger.info("Settings GUI: perubahan disimpan.")
         self._load_snapshot()
 
     def _show_error(self, message: str) -> None:

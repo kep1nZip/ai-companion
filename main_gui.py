@@ -35,12 +35,19 @@ def main() -> None:
 
     performance_tracker = PerformanceTracker()
 
-    # v2.0 — Provider Selection (§46 Step 6/9). Default tetap Gemini (Gemini
-    # TIDAK dihapus, cuma jadi salah satu opsi) — ganti AI_PROVIDER=local di
-    # .env kalau mau pakai LM Studio. System prompt dibangun sekali di sini
-    # lewat pipeline yang SAMA (load_prompts + build_system_prompt) yang
-    # dipakai Companion untuk provider default-nya sendiri — tidak ada
-    # logic persona kedua.
+    # v2.0 Step 9 — Provider Selection & Default Decision. Default SEKARANG
+    # "local" (config/settings.py) — diputuskan resmi setelah Step 7 Full
+    # Regression selesai & diterima Teacher, bukan cuma karena gratis. Gemini
+    # TIDAK dihapus — override AI_PROVIDER=gemini di .env kalau mau pakai itu.
+    # System prompt dibangun sekali di sini lewat pipeline yang SAMA
+    # (load_prompts + build_system_prompt) yang dipakai Companion untuk
+    # provider default-nya sendiri — tidak ada logic persona kedua.
+    #
+    # TIDAK ADA try/except di sini yang menangkap kegagalan provider lalu
+    # diam-diam ganti ke provider lain (No Silent Fallback, spec v2.0 Step 9
+    # §15) — kalau Local/Gemini gagal, errornya muncul natural lewat
+    # Companion.chat()/check_autonomous_opportunity() (ProviderError ->
+    # CompanionError) ke GUI, BUKAN di-tangani diam-diam di sini.
     if AI_PROVIDER == "local":
         prompts = load_prompts()
         system_prompt = build_system_prompt(prompts)
