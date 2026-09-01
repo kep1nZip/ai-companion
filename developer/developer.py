@@ -14,6 +14,7 @@ from developer.memory_debug import MemorySnapshot, build_memory_snapshot
 from developer.performance_debug import MetricSnapshot, PerformanceTracker
 from developer.routine_debug import RoutineSnapshot, build_routine_snapshot
 from developer.vision_debug import VisionSnapshot, build_vision_snapshot
+from ai.memory_worker import MemoryWorkerStatus
 from config.constants import LOG_DIR, LOG_FILE
 from config.logger import logger
 
@@ -42,6 +43,7 @@ class DeveloperSnapshot:
     routine: Optional[RoutineSnapshot]
     initiative: Optional[InitiativeSnapshot]
     memory: Optional[MemorySnapshot]
+    memory_worker: Optional[MemoryWorkerStatus]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -121,6 +123,17 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil memory snapshot: {}", e)
             return None
 
+    def get_memory_worker(self) -> Optional[MemoryWorkerStatus]:
+        """v2.1 §21: read-only murni — cuma memanggil
+        Companion.get_memory_worker_status() (yang sendiri cuma baca angka
+        dari MemoryExtractionWorker), TIDAK PERNAH memicu extraction/
+        submit apa pun."""
+        try:
+            return self._companion.get_memory_worker_status()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil status memory worker: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -164,6 +177,7 @@ class DeveloperService:
             routine=self.get_routine(),
             initiative=self.get_initiative(),
             memory=self.get_memory(),
+            memory_worker=self.get_memory_worker(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -182,7 +196,8 @@ class DeveloperService:
 
         for title, obj in [
             ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),
-            ("Initiative", s.initiative), ("Memory", s.memory), ("Avatar", s.avatar),
+            ("Initiative", s.initiative), ("Memory", s.memory),
+            ("Memory Worker", s.memory_worker), ("Avatar", s.avatar),
         ]:
             if obj is None:
                 continue

@@ -455,6 +455,11 @@ class MainWindow(QMainWindow):
         # TIDAK BOLEH bertahan setelah aplikasi ditutup — shutdown() men-stop
         # thread-nya secara bersih (join dengan timeout).
         self._vision.shutdown()
+        # v2.1: worker Memory Extraction (background, ai/memory_worker.py)
+        # TIDAK BOLEH bertahan setelah aplikasi ditutup — pola yang SAMA
+        # persis dengan self._vision.shutdown() di atas (join/wait dengan
+        # batas waktu, tidak menggantung tanpa batas).
+        self._companion.shutdown()
         # v1.7: pastikan QTimer polling Developer Dashboard (kalau sedang
         # terbuka) ikut berhenti — closeEvent dialog TIDAK otomatis
         # terpanggil hanya karena parent window ditutup.

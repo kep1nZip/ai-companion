@@ -11,6 +11,7 @@ from ai.providers.base import LanguageModelProvider, ProviderError, ProviderRate
 from ai.providers.gemini_provider import GeminiProvider
 from ai.conversation import Conversation
 from ai.memory_extractor import MemoryExtractor
+from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder
 from database.memory_manager import MemoryManager, Memory
 from behavior.behavior_engine import BehaviorEngine
@@ -76,6 +77,17 @@ class Companion:
         self._conversation = Conversation()
         self._memory_manager = MemoryManager()
         self._memory_extractor = MemoryExtractor(api_key=GEMINI_API_KEY, model_name=MODEL_NAME)
+        # v2.1 — Async Memory Extraction: MemoryExtractor & MemoryManager
+        # TIDAK berubah sama sekali (v2.1 Rule 2/3) — cuma DIPANGGIL secara
+        # berbeda sekarang, lewat worker background ini alih-alih inline di
+        # chat() (lihat _schedule_memory_extraction). max_workers=1: task
+        # dijamin jalan satu per satu, jadi kita tidak perlu membuktikan
+        # MemoryExtractor/MemoryManager aman dipanggil dari banyak thread
+        # SEKALIGUS — cukup aman dipanggil dari SATU thread lain yang bukan
+        # main/GUI thread, yang sudah terpenuhi (MemoryManager membuka
+        # koneksi SQLite baru tiap panggilan, tidak pernah menyimpan
+        # connection sebagai state bersama — lihat database/memory_manager.py).
+        self._memory_worker = MemoryExtractionWorker()
 
         self._behavior_engine = BehaviorEngine(memory_manager=self._memory_manager)
         self._context_builder = ContextBuilder()
@@ -158,7 +170,14 @@ class Companion:
             logger.error("Provider error: {}", e)
             raise CompanionError(str(e)) from e
 
-        self._remember_if_useful(user_input)
+        # v2.1 §10 Ordering Rule: dipanggil SETELAH reply divalidasi & masuk
+        # Conversation (add_assistant_message di atas sudah terjadi, dan kita
+        # sudah lewat blok except tanpa exception) — TAPI cuma untuk
+        # MENJADWALKAN, bukan menunggu hasilnya. Baris ini sendiri tidak
+        # memblokir apa pun (submit() di MemoryExtractionWorker return
+        # seketika) — chat() return SEKARANG tidak lagi menunggu Gemini
+        # extraction call kedua seperti sebelum v2.1.
+        self._schedule_memory_extraction(user_input)
         return reply
 
     def check_autonomous_opportunity(
@@ -212,6 +231,18 @@ class Companion:
                 self._routine.mark_completed(routine_event)
             self._initiative.mark_started()
 
+            # v2.1 §18 catatan: giliran otonom SENGAJA tidak menjadwalkan
+            # memory extraction di sini. MemoryExtractor.extract() adalah
+            # kontrak yang membaca SATU PESAN TEACHER (lihat system prompt
+            # di ai/memory_extractor.py: "baca satu pesan dari Teacher") —
+            # pada giliran otonom TIDAK ADA pesan Teacher sama sekali (itu
+            # sebabnya method ini dipanggil tanpa parameter user_input).
+            # Mengekstrak dari balasan Arona sendiri akan mengubah makna
+            # ekstraksi (v2.1 Rule 42/Stop Condition #9: semantik ekstraksi
+            # tidak boleh berubah substansial di milestone ini) — jadi
+            # perilaku di sini SAMA seperti sebelum v2.1 (giliran otonom
+            # memang tidak pernah memicu memory extraction, dikonfirmasi
+            # lewat inspeksi kode v1.8-v2.0 sebelum perubahan ini dibuat).
             return reply
 
         except ProviderError as e:
@@ -496,13 +527,54 @@ class Companion:
         logger.info("Context Generated (Autonomous)")
         return contents
 
-    def _remember_if_useful(self, user_input: str) -> None:
-        try:
-            facts = self._memory_extractor.extract(user_input)
+    def _schedule_memory_extraction(self, user_input: str) -> None:
+        """v2.1 — Async Memory Extraction. Sebelumnya (`_remember_if_useful`,
+        v1.x-v2.0) method ini MEMANGGIL LANGSUNG MemoryExtractor.extract()
+        secara sinkron, di dalam chat() yang sama, sebelum reply
+        dikembalikan ke Teacher — jadi Teacher menunggu DUA panggilan
+        Gemini berurutan (bahasa utama + ekstraksi memori) walau cuma satu
+        yang benar-benar dia tunggu jawabannya. Sekarang method ini HANYA
+        menyusun closure lalu men-submit ke MemoryExtractionWorker
+        (ai/memory_worker.py) — tidak menunggu apa pun, return seketika.
+
+        v2.1 §11/§12: `user_input` di-terima sebagai str (sudah immutable,
+        sudah jadi snapshot alami sejak jadi parameter chat()) — closure di
+        bawah TIDAK menerima Companion/Conversation/objek aplikasi lain,
+        cuma menyentuh MemoryExtractor & MemoryManager (keduanya sudah ada,
+        tidak diubah kontraknya) lewat referensi yang di-capture di sini.
+        Closure ini TIDAK PERNAH memanggil add_user_message()/
+        add_assistant_message()/rollback_last_message() — Conversation
+        SUDAH final untuk giliran ini sebelum baris ini dipanggil (lihat
+        ordering di chat()), worker cuma baca/tulis Memory, tidak pernah
+        menyentuh Conversation sama sekali."""
+        memory_extractor = self._memory_extractor
+        memory_manager = self._memory_manager
+
+        def _extract_and_save() -> None:
+            facts = memory_extractor.extract(user_input)
             if not facts:
                 logger.info("Tidak ada fakta layak diingat dari pesan ini.")
                 return
             for fact in facts:
-                self._memory_manager.save_memory(fact["category"], fact["content"])
-        except Exception as e:
-            logger.warning("Pipeline memori gagal, percakapan tetap lanjut: {}", e)
+                memory_manager.save_memory(fact["category"], fact["content"])
+
+        self._memory_worker.submit(_extract_and_save)
+
+    # ---------- Memory Worker (Developer Diagnostics, v2.1 §21) ----------
+
+    def get_memory_worker_status(self) -> MemoryWorkerStatus:
+        """Passthrough READ-ONLY untuk Developer Dashboard — TIDAK ADA
+        start()/stop()/pause() yang di-expose di sini (v2.1 §21: "Developer
+        Dashboard does not control the worker"), cuma angka observasi."""
+        return self._memory_worker.status()
+
+    # ---------- Shutdown (v2.1 §29/§30) ----------
+
+    def shutdown(self) -> None:
+        """Dipanggil dari luar (ui/window.py closeEvent, main.py sebelum
+        keluar) — pola yang SAMA dengan Vision.shutdown() yang sudah ada
+        (v1.5.2). Memory extraction yang sedang jalan diberi kesempatan
+        selesai dengan batas waktu (lihat MemoryExtractionWorker.shutdown),
+        TIDAK PERNAH menggantung tanpa batas dan TIDAK PERNAH menyisakan
+        worker yang bertahan setelah aplikasi ditutup."""
+        self._memory_worker.shutdown()

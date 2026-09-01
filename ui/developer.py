@@ -161,6 +161,7 @@ class DeveloperDashboard(QDialog):
         self._routine_card = self._add_section("Routine")
         self._initiative_card = self._add_section("Initiative")
         self._memory_card = self._add_section("Memory")
+        self._memory_worker_card = self._add_section("Memory Extraction (Async)")
         self._avatar_card = self._add_section("Avatar")
         self._performance_card = self._add_section("Performance")
 
@@ -296,6 +297,7 @@ class DeveloperDashboard(QDialog):
         self._render_routine(snapshot)
         self._render_initiative(snapshot)
         self._render_memory(snapshot)
+        self._render_memory_worker(snapshot)
         self._render_avatar(snapshot)
         self._render_performance(snapshot)
 
@@ -408,6 +410,20 @@ class DeveloperDashboard(QDialog):
             f"Internal Bookkeeping Entries (hidden from list): {m.internal_marker_count}",
         ]
         self._set_card(self._memory_card, "\n".join(lines))
+
+    def _render_memory_worker(self, snapshot: DeveloperSnapshot) -> None:
+        w = snapshot.memory_worker
+        if w is None:
+            self._set_card(self._memory_worker_card, "Not available")
+            return
+        lines = [
+            f"Pending: {w.pending}",
+            f"Completed: {w.total_completed}",
+            f"Failed: {w.total_failed}",
+            f"Last Success: {w.last_success_at or 'None'}",
+            f"Last Failure: {w.last_failure_at or 'None'}",
+        ]
+        self._set_card(self._memory_worker_card, "\n".join(lines))
 
     def _render_avatar(self, snapshot: DeveloperSnapshot) -> None:
         a = snapshot.avatar

@@ -32,6 +32,10 @@ def main() -> None:
 
             if result.should_exit:
                 logger.info("Application exiting via /exit command.")
+                # v2.1: pastikan worker Memory Extraction background
+                # (ai/memory_worker.py) tidak bertahan setelah CLI keluar —
+                # sama seperti ui/window.py closeEvent, tapi untuk jalur CLI.
+                companion.shutdown()
                 break
 
             continue
