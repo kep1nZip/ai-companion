@@ -64,6 +64,7 @@ class SettingsPage(QWidget):
         self._is_revealed = False
         self._api_key_dirty = False
         self._provider_dirty = False
+        self._memory_provider_dirty = False  # v2.2: dipisah dari _provider_dirty (Language Provider)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -116,6 +117,25 @@ class SettingsPage(QWidget):
         self._provider_status_value = self._add_readonly_row(layout, "Status")
 
         self._model_value = self._add_readonly_row(layout, "Gemini Model")
+
+        # v2.2: Memory Extraction Provider — dropdown TERPISAH dari Language
+        # Provider di atas (§27: dua keputusan independen). TIDAK ADA field
+        # "Local Model" kedua di sini — Local Memory Extraction reuse
+        # LOCAL_PROVIDER_MODEL_NAME yang sama dipakai Language Provider
+        # (§20/§30), jadi tidak ada apa pun untuk diedit selain provider-nya
+        # sendiri.
+        memory_provider_row = QHBoxLayout()
+        memory_provider_label = QLabel("Memory Extraction Provider")
+        memory_provider_label.setObjectName("settingsFieldLabel")
+        memory_provider_row.addWidget(memory_provider_label)
+
+        self._memory_provider_combo = QComboBox()
+        self._memory_provider_combo.addItems(["Local", "Gemini"])
+        self._memory_provider_combo.currentIndexChanged.connect(self._on_memory_provider_changed)
+        memory_provider_row.addWidget(self._memory_provider_combo, stretch=1)
+        layout.addLayout(memory_provider_row)
+
+        self._memory_provider_status_value = self._add_readonly_row(layout, "Memory Status")
 
         api_key_row = QHBoxLayout()
         api_key_label = QLabel("API Key")
@@ -237,9 +257,17 @@ class SettingsPage(QWidget):
         self._update_provider_field_visibility(snapshot.ai_provider)
         self._update_provider_status(snapshot.ai_provider)
 
+        # v2.2: reset tampilan Memory Provider dari snapshot, pola sama
+        # dengan Language Provider di atas.
+        self._memory_provider_combo.blockSignals(True)
+        self._memory_provider_combo.setCurrentText(snapshot.memory_provider.capitalize())
+        self._memory_provider_combo.blockSignals(False)
+        self._update_memory_provider_status(snapshot.memory_provider)
+
         self._error_label.hide()
         self._api_key_dirty = False
         self._provider_dirty = False
+        self._memory_provider_dirty = False
         self._sync_dirty_ui()
 
     def _update_provider_field_visibility(self, provider: str) -> None:
@@ -255,6 +283,15 @@ class SettingsPage(QWidget):
             self._provider_status_value.setText("● Local provider configured")
         else:
             self._provider_status_value.setText("● Gemini provider configured")
+
+    def _update_memory_provider_status(self, provider: str) -> None:
+        # v2.2: pola IDENTIK dengan _update_provider_status di atas — config-
+        # sane check, bukan live health-check (spec §12 yang sama berlaku
+        # untuk Memory Provider).
+        if provider.strip().lower() == "local":
+            self._memory_provider_status_value.setText("● Local memory provider configured")
+        else:
+            self._memory_provider_status_value.setText("● Gemini memory provider configured")
 
     # ---------- API Key actions ----------
 
@@ -287,10 +324,16 @@ class SettingsPage(QWidget):
         self._provider_dirty = True
         self._sync_dirty_ui()
 
+    # ---------- Memory Provider actions (v2.2) ----------
+
+    def _on_memory_provider_changed(self, _index: int) -> None:
+        self._memory_provider_dirty = True
+        self._sync_dirty_ui()
+
     # ---------- Shared dirty state ----------
 
     def _sync_dirty_ui(self) -> None:
-        dirty = self._api_key_dirty or self._provider_dirty
+        dirty = self._api_key_dirty or self._provider_dirty or self._memory_provider_dirty
         self._apply_button.setEnabled(dirty)
         self._cancel_button.setEnabled(dirty)
         self._restart_label.setVisible(dirty)
@@ -321,6 +364,18 @@ class SettingsPage(QWidget):
                 self._show_error(str(e))
                 return
             logger.info("Settings GUI: AI provider diperbarui, restart dibutuhkan.")
+
+        # v2.2: dipisah dari _provider_dirty (Language Provider) — pola sama
+        # dengan blok api_key_dirty/provider_dirty di atas.
+        if self._memory_provider_dirty:
+            try:
+                self._service.save_memory_provider_settings(
+                    memory_provider=self._memory_provider_combo.currentText(),
+                )
+            except SettingsSaveError as e:
+                self._show_error(str(e))
+                return
+            logger.info("Settings GUI: Memory Extraction provider diperbarui, restart dibutuhkan.")
 
         logger.info("Settings GUI: perubahan disimpan.")
         self._load_snapshot()

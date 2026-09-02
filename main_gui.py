@@ -7,7 +7,14 @@ from ai.personality import load_prompts
 from ai.prompt_builder import build_system_prompt
 from ai.providers.gemini_provider import GeminiProvider
 from ai.providers.local_provider import LocalProvider
-from config.settings import GEMINI_API_KEY, AI_PROVIDER, LOCAL_PROVIDER_BASE_URL, LOCAL_PROVIDER_MODEL_NAME
+from ai.memory_extractor import EXTRACTION_SYSTEM_PROMPT
+from config.settings import (
+    GEMINI_API_KEY,
+    AI_PROVIDER,
+    LOCAL_PROVIDER_BASE_URL,
+    LOCAL_PROVIDER_MODEL_NAME,
+    MEMORY_PROVIDER,
+)
 from ui.window import MainWindow
 from ui.theme import DARK_STYLESHEET
 from config.constants import APP_NAME, VERSION, MODEL_NAME
@@ -61,10 +68,43 @@ def main() -> None:
         provider = None  # Companion akan membuat GeminiProvider default-nya sendiri
         logger.info("AI Provider: GEMINI ({})", MODEL_NAME)
 
+    # v2.2 — Local Memory Extraction Provider Selection. KEPUTUSAN TERPISAH
+    # dari AI_PROVIDER di atas (§27) — sengaja dua blok if/else yang berdiri
+    # sendiri, BUKAN "kalau AI_PROVIDER local maka MEMORY_PROVIDER ikut
+    # local". `system_prompt` di sini adalah EXTRACTION_SYSTEM_PROMPT (dari
+    # ai/memory_extractor.py, TIDAK diubah sedikit pun) — BUKAN system_prompt
+    # chat di atas. `base_url`/`model_name` SENGAJA reuse LOCAL_PROVIDER_*
+    # yang sama dengan chat (§20/§30: implementasi pertama TIDAK membuat
+    # server LM Studio kedua secara otomatis — Memory Local & Chat Local,
+    # kalau dua-duanya aktif, bicara ke server & model YANG SAMA).
+    # temperature/frequency_penalty/presence_penalty = 0.0 (BUKAN default
+    # 0.85/0.4/0.4 milik `provider` chat di atas) — §13: ekstraksi memori
+    # butuh deterministic & conservative, BUKAN kreatif. TIDAK ADA try/except
+    # yang diam-diam fallback ke Gemini di sini juga (No Silent Fallback,
+    # sama seperti AI_PROVIDER di atas) — kalau Local Memory gagal jalan,
+    # errornya muncul natural lewat MemoryExtractionWorker (sudah menangkap
+    # & mencatatnya per task, v2.1) TANPA mengganti provider diam-diam.
+    if MEMORY_PROVIDER == "local":
+        memory_provider = LocalProvider(
+            system_prompt=EXTRACTION_SYSTEM_PROMPT,
+            model_name=LOCAL_PROVIDER_MODEL_NAME,
+            base_url=LOCAL_PROVIDER_BASE_URL,
+            temperature=0.0,
+            frequency_penalty=0.0,
+            presence_penalty=0.0,
+        )
+        logger.info(
+            "Memory Extraction Provider: LOCAL ({} @ {})", LOCAL_PROVIDER_MODEL_NAME, LOCAL_PROVIDER_BASE_URL
+        )
+    else:
+        memory_provider = None  # Companion akan membuat GeminiProvider extraction default-nya sendiri
+        logger.info("Memory Extraction Provider: GEMINI ({})", MODEL_NAME)
+
     companion = Companion(
         vision=vision,
         performance_tracker=performance_tracker,
         provider=provider,
+        memory_provider=memory_provider,
     )
 
     logger.info("Companion backend ready.")

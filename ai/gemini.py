@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from google import genai
 from google.genai import types
 
@@ -16,13 +18,21 @@ class GeminiClient:
     Class ini mengelola konfigurasi model serta menerjemahkan respons
     kosong dari Gemini menjadi `GeminiResponseError`.
     """
-        
-    def __init__(self, api_key: str, model_name: str, system_prompt: str):
+
+    def __init__(self, api_key: str, model_name: str, system_prompt: str, temperature: Optional[float] = None):
         self._client = genai.Client(api_key=api_key)
         self._model_name = model_name
-        self._config = types.GenerateContentConfig(
-            system_instruction=system_prompt,
-        )
+        # v2.2 §9/§10: `temperature` OPSIONAL (default None) — dipakai supaya
+        # GeminiClient/GeminiProvider bisa di-reuse untuk Memory Extraction
+        # (yang butuh temperature=0.0, deterministic, lihat v2.2 §13
+        # "factuality + conservative extraction") TANPA mengubah perilaku
+        # chat utama sama sekali. Kalau None (default, dipakai chat utama
+        # apa adanya), `types.GenerateContentConfig` dibangun TANPA field
+        # temperature — BYTE-IDENTICAL dengan konstruksi sebelum v2.2.
+        config_kwargs = {"system_instruction": system_prompt}
+        if temperature is not None:
+            config_kwargs["temperature"] = temperature
+        self._config = types.GenerateContentConfig(**config_kwargs)
 
     def send(self, contents: list[types.Content]) -> str:
         response = self._client.models.generate_content(

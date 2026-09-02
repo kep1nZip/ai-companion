@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from google.genai import types
 from google.genai.errors import ClientError
 
@@ -20,10 +22,17 @@ class GeminiProvider(LanguageModelProvider):
 
     System prompt, konfigurasi model, dan seluruh perilaku generate SAMA
     PERSIS dengan sebelumnya — dipertahankan lewat GeminiClient yang di-reuse
-    apa adanya di __init__."""
+    apa adanya di __init__.
 
-    def __init__(self, api_key: str, model_name: str, system_prompt: str):
-        self._client = GeminiClient(api_key=api_key, model_name=model_name, system_prompt=system_prompt)
+    v2.2: `temperature` OPSIONAL ditambahkan HANYA supaya instance provider
+    TERPISAH bisa dikonstruksi untuk Memory Extraction (temperature=0.0)
+    tanpa memengaruhi instance chat utama (yang tetap tidak pernah mengisi
+    parameter ini, persis seperti sebelum v2.2 — lihat GeminiClient)."""
+
+    def __init__(self, api_key: str, model_name: str, system_prompt: str, temperature: Optional[float] = None):
+        self._client = GeminiClient(
+            api_key=api_key, model_name=model_name, system_prompt=system_prompt, temperature=temperature
+        )
 
     def generate(self, contents: list[types.Content]) -> str:
         try:

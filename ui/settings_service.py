@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import find_dotenv, set_key
 
 from config import constants
-from config.settings import GEMINI_API_KEY, AI_PROVIDER, LOCAL_PROVIDER_MODEL_NAME
+from config.settings import GEMINI_API_KEY, AI_PROVIDER, LOCAL_PROVIDER_MODEL_NAME, MEMORY_PROVIDER
 from config.logger import logger
 
 
@@ -27,7 +27,10 @@ class SettingsSnapshot:
     untuk klasifikasi lengkap tiap field beserta alasannya), KECUALI
     ai_provider & local_provider_model_name (v2.0 Step 9 — sama seperti
     GEMINI_API_KEY, keduanya sudah punya mekanisme persistence nyata lewat
-    .env sejak v2.0 Step 6, cuma belum pernah di-expose ke GUI)."""
+    .env sejak v2.0 Step 6, cuma belum pernah di-expose ke GUI), dan
+    memory_provider (v2.2 — pola identik, lewat .env, TIDAK ada
+    local_memory_model_name terpisah karena Local Memory Extraction reuse
+    LOCAL_PROVIDER_MODEL_NAME yang sama dengan chat, lihat config/settings.py)."""
 
     version: str
     theme: str
@@ -41,6 +44,7 @@ class SettingsSnapshot:
     vtube_token_present: bool
     ai_provider: str  # v2.0 Step 9: "local" | "gemini"
     local_provider_model_name: str  # v2.0 Step 9
+    memory_provider: str  # v2.2: "local" | "gemini" — keputusan TERPISAH dari ai_provider
 
 
 class SettingsService:
@@ -68,6 +72,7 @@ class SettingsService:
             vtube_token_present=Path(constants.VTUBE_TOKEN_PATH).exists(),
             ai_provider=AI_PROVIDER,
             local_provider_model_name=LOCAL_PROVIDER_MODEL_NAME,
+            memory_provider=MEMORY_PROVIDER,
         )
 
     def reveal_api_key(self) -> str:
@@ -136,6 +141,38 @@ class SettingsService:
         logger.info(
             "SettingsService: AI provider diperbarui ke '{}' di .env (restart dibutuhkan untuk berlaku).",
             normalized_provider,
+        )
+
+    # ---------- Memory Extraction Provider (v2.2) ----------
+
+    def validate_memory_provider(self, value: str) -> str | None:
+        """v2.2: dua provider yang sama-sama sudah diimplementasikan — reuse
+        whitelist yang SAMA (_VALID_PROVIDERS) dengan Language Provider,
+        BUKAN whitelist baru, karena set provider yang valid memang identik
+        ("local", "gemini")."""
+        if value.strip().lower() not in self._VALID_PROVIDERS:
+            return f"Memory provider must be one of: {', '.join(self._VALID_PROVIDERS)}."
+        return None
+
+    def save_memory_provider_settings(self, memory_provider: str) -> None:
+        """Tulis MEMORY_PROVIDER ke .env yang sama. TIDAK ADA local model
+        name terpisah untuk ditulis di sini (§20/§30 — Local Memory
+        Extraction reuse LOCAL_PROVIDER_MODEL_NAME chat yang sudah ada, tidak
+        ada field kedua untuk itu). Restart tetap wajib — Companion cuma
+        construct MemoryExtractor SEKALI saat startup (persis Language
+        Provider di atas, §29 spec: 'Do not hot-swap MemoryExtractor
+        components unless current lifecycle safely supports it' — lifecycle
+        saat ini tidak mendukung, jadi tidak dipaksakan)."""
+        error = self.validate_memory_provider(memory_provider)
+        if error:
+            raise SettingsSaveError(error)
+
+        normalized = memory_provider.strip().lower()
+        self._write_env_key("MEMORY_PROVIDER", normalized)
+        logger.info(
+            "SettingsService: Memory Extraction provider diperbarui ke '{}' di .env "
+            "(restart dibutuhkan untuk berlaku).",
+            normalized,
         )
 
     # ---------- Shared .env write helper ----------

@@ -10,7 +10,7 @@ from ai.prompt_builder import build_system_prompt
 from ai.providers.base import LanguageModelProvider, ProviderError, ProviderRateLimitError, ProviderResponseError
 from ai.providers.gemini_provider import GeminiProvider
 from ai.conversation import Conversation
-from ai.memory_extractor import MemoryExtractor
+from ai.memory_extractor import MemoryExtractor, EXTRACTION_SYSTEM_PROMPT
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder
 from database.memory_manager import MemoryManager, Memory
@@ -58,6 +58,7 @@ class Companion:
         enable_initiative: bool = True,
         performance_tracker: Optional[PerformanceTracker] = None,
         provider: Optional[LanguageModelProvider] = None,
+        memory_provider: Optional[LanguageModelProvider] = None,
     ):
         prompts = load_prompts()
         system_prompt = build_system_prompt(prompts)
@@ -76,7 +77,32 @@ class Companion:
         )
         self._conversation = Conversation()
         self._memory_manager = MemoryManager()
-        self._memory_extractor = MemoryExtractor(api_key=GEMINI_API_KEY, model_name=MODEL_NAME)
+        # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
+        # dipakai (bukan re-deteksi dari type() nanti) — murni string
+        # read-only untuk Developer Dashboard, tidak memengaruhi extract()
+        # sama sekali.
+        self._memory_provider_name = "local" if memory_provider is not None else "gemini"
+        # v2.2 §8/§10: pola IDENTIK dengan `self._gemini` di atas — parameter
+        # `memory_provider` opsional supaya provider Memory Extraction bisa
+        # disuntik (Local, lewat main_gui.py) TANPA Companion perlu tahu apa
+        # pun soal Gemini/Local/LM Studio. Default kalau tidak disuntik:
+        # GeminiProvider BARU (instance TERPISAH dari self._gemini di atas,
+        # SENGAJA — chat utama & Memory Extraction butuh system_prompt DAN
+        # temperature yang beda total, lihat catatan panjang di
+        # ai/providers/gemini_provider.py & ai/memory_extractor.py) yang
+        # dikonfigurasi khusus untuk ekstraksi: system_prompt =
+        # EXTRACTION_SYSTEM_PROMPT (BUKAN persona Arona), temperature=0.0
+        # (deterministic — v2.2 §13 "factuality + conservative extraction",
+        # SAMA PERSIS dengan config yang dipakai `google.genai.Client`
+        # langsung di v2.1, cuma sekarang lewat GeminiProvider).
+        self._memory_extractor = MemoryExtractor(
+            provider=memory_provider or GeminiProvider(
+                api_key=GEMINI_API_KEY,
+                model_name=MODEL_NAME,
+                system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                temperature=0.0,
+            )
+        )
         # v2.1 — Async Memory Extraction: MemoryExtractor & MemoryManager
         # TIDAK berubah sama sekali (v2.1 Rule 2/3) — cuma DIPANGGIL secara
         # berbeda sekarang, lewat worker background ini alih-alih inline di
@@ -87,6 +113,10 @@ class Companion:
         # main/GUI thread, yang sudah terpenuhi (MemoryManager membuka
         # koneksi SQLite baru tiap panggilan, tidak pernah menyimpan
         # connection sebagai state bersama — lihat database/memory_manager.py).
+        # v2.2 §18: satu worker thread ini TETAP dipakai apa adanya untuk
+        # provider Local juga — TIDAK ditambah worker count sekadar karena
+        # Local inference lebih lambat dari Gemini (§18 eksplisit melarang
+        # ini); task tetap serial, satu per satu.
         self._memory_worker = MemoryExtractionWorker()
 
         self._behavior_engine = BehaviorEngine(memory_manager=self._memory_manager)
@@ -567,6 +597,13 @@ class Companion:
         start()/stop()/pause() yang di-expose di sini (v2.1 §21: "Developer
         Dashboard does not control the worker"), cuma angka observasi."""
         return self._memory_worker.status()
+
+    def get_memory_provider_name(self) -> str:
+        """v2.2 §21: passthrough READ-ONLY — "local" | "gemini", provider
+        yang BENAR-BENAR dipakai MemoryExtractor saat ini (ditentukan sekali
+        saat __init__, tidak berubah selama proses hidup — restart wajib
+        untuk ganti, sama seperti Language Provider)."""
+        return self._memory_provider_name
 
     # ---------- Shutdown (v2.1 §29/§30) ----------
 

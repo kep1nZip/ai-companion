@@ -44,6 +44,7 @@ class DeveloperSnapshot:
     initiative: Optional[InitiativeSnapshot]
     memory: Optional[MemorySnapshot]
     memory_worker: Optional[MemoryWorkerStatus]
+    memory_provider_name: Optional[str]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -134,6 +135,15 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil status memory worker: {}", e)
             return None
 
+    def get_memory_provider_name(self) -> Optional[str]:
+        """v2.2 §21: read-only murni — "local" | "gemini" | None (kalau
+        gagal ambil)."""
+        try:
+            return self._companion.get_memory_provider_name()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil nama memory provider: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -178,6 +188,7 @@ class DeveloperService:
             initiative=self.get_initiative(),
             memory=self.get_memory(),
             memory_worker=self.get_memory_worker(),
+            memory_provider_name=self.get_memory_provider_name(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -202,6 +213,12 @@ class DeveloperService:
             if obj is None:
                 continue
             lines += ["", f"## {title}"] + [f"- {k}: {v}" for k, v in asdict(obj).items()]
+            if title == "Memory Worker" and s.memory_provider_name is not None:
+                # v2.2: memory_provider_name adalah str biasa (bukan
+                # dataclass) — tidak bisa lewat asdict() seperti field lain
+                # di loop ini, jadi ditambahkan sebagai baris terpisah,
+                # tetap di bawah section "Memory Worker" yang sama.
+                lines += [f"- provider: {s.memory_provider_name}"]
 
         lines += ["", "## Performance"]
         lines += [

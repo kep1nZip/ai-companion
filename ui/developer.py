@@ -417,6 +417,10 @@ class DeveloperDashboard(QDialog):
             self._set_card(self._memory_worker_card, "Not available")
             return
         lines = [
+            # v2.2: baris provider paling atas — Teacher paling sering ingin
+            # tahu "yang aktif sekarang Local atau Gemini?" duluan sebelum
+            # angka statistik.
+            f"Provider: {(snapshot.memory_provider_name or 'unknown').capitalize()}",
             f"Pending: {w.pending}",
             f"Completed: {w.total_completed}",
             f"Failed: {w.total_failed}",
