@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 from config.logger import logger
 
@@ -36,10 +38,48 @@ class MemoryManager:
         self._db_path = db_path
         self._ensure_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """v2.2.2 hotfix (ditemukan Teacher lewat crash Windows saat
+        menjalankan test_memory_quality_validation.py): SEBELUMNYA method
+        ini `return` sqlite3.Connection polos, dipakai lewat
+        `with self._connect() as conn:` di 7 tempat berbeda di file ini.
+
+        BUG TERSEMBUNYI: `with conn:` pada objek sqlite3.Connection HANYA
+        mengelola TRANSACTION (commit saat sukses, rollback saat
+        exception) — TIDAK PERNAH memanggil `conn.close()`. Connection
+        tetap "hidup" (file handle OS tetap terbuka) sampai Python
+        garbage-collect objeknya sendiri, bukan segera setelah `with`
+        block selesai seperti yang terlihat dari bentuk kodenya.
+
+        Di Linux/macOS ini nyaris tidak pernah kelihatan sebagai bug
+        (refcounting CPython biasanya langsung membuang objek begitu
+        keluar scope + POSIX mengizinkan unlink file yang masih ada
+        handle terbuka) — tapi di Windows, OS MELARANG menghapus/
+        memindah file yang masih ada handle terbuka sama sekali. Ini
+        persis penyebab `PermissionError: [WinError 32]` yang Teacher
+        temui saat `test_memory_quality_validation.py` (v2.2.2) mencoba
+        membersihkan direktori temporary-nya — bukan bug di script test
+        itu sendiri, tapi di sini, yang kebetulan baru ketahuan lewat
+        script itu.
+
+        Perbaikan: `_connect()` sekarang generator-based context manager
+        (`@contextmanager`, sudah diimpor sejak awal tapi belum pernah
+        dipakai — `Iterator` juga) — `with conn:` (commit/rollback) TETAP
+        jalan PERSIS seperti sebelumnya, DITAMBAH `conn.close()` di
+        `finally` (dijamin jalan walau ada exception). KE-7 caller
+        (`with self._connect() as conn:` di seluruh file ini, termasuk
+        yang dipakai `test_memory_quality_validation.py`) TIDAK PERLU
+        diubah SATU BARIS PUN — sintaksnya identik, cuma semantiknya
+        sekarang benar. Nol perubahan pada skema, query, atau perilaku
+        dedupe/validasi kategori — murni resource cleanup."""
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:

@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Optional
 
 from ai.memory_extractor import MemoryExtractor, EXTRACTION_SYSTEM_PROMPT
+from ai.providers.base import LanguageModelProvider, ProviderError
 from ai.providers.gemini_provider import GeminiProvider
 from ai.providers.local_provider import LocalProvider
 from database.memory_manager import MemoryManager
@@ -112,6 +113,40 @@ class ProviderRun:
     results: list = field(default_factory=list)
     fatal_error: Optional[str] = None
     contradiction_final_state: list = field(default_factory=list)
+    connectivity_ok: Optional[bool] = None  # None = belum dicek, True/False = hasil pre-check
+    connectivity_detail: str = ""
+
+
+def _connectivity_check(provider: LanguageModelProvider, provider_label: str) -> tuple:
+    """v2.2.2 hotfix (respons atas temuan Teacher — 14/14 kasus Local
+    kembali kosong tanpa satu pun error tercatat): `MemoryExtractor.
+    extract()` menangkap SEMUA error provider secara internal dan cuma
+    menulis log-nya ke FILE (logs/app.log), BUKAN ke console/laporan
+    harness ini — jadi sebelumnya TIDAK ADA CARA membedakan "model
+    memutuskan tidak ada fakta layak diingat" dari "provider gagal
+    merespons sama sekali" hanya dari laporan yang dihasilkan.
+
+    Fungsi ini memanggil `provider.generate()` LANGSUNG (di luar
+    MemoryExtractor, TIDAK lewat try/except-nya yang menelan error) dengan
+    SATU prompt trivial, SEBELUM test matrix jalan — supaya kalau provider
+    memang tidak bisa dihubungi sama sekali (LM Studio belum jalan, model
+    belum di-load, base_url salah, dst), itu ketahuan JELAS di awal,
+    bukan tersamar sebagai "14/14 hasil kosong" yang ambigu."""
+    from google.genai import types
+    try:
+        contents = [types.Content(role="user", parts=[types.Part(text="Balas dengan kata OK saja, tanpa tanda baca.")])]
+        raw = provider.generate(contents)
+        detail = f"Provider merespons: \"{(raw or '').strip()[:120]}\""
+        print(f"  ✅ Connectivity check {provider_label}: OK — {detail}")
+        return True, detail
+    except ProviderError as e:
+        detail = f"ProviderError: {e}"
+        print(f"  ❌ Connectivity check {provider_label}: GAGAL — {detail}")
+        return False, detail
+    except Exception as e:
+        detail = f"Exception tak terduga: {e}"
+        print(f"  ❌ Connectivity check {provider_label}: GAGAL — {detail}")
+        return False, detail
 
 
 # ---------- Provider construction — pola IDENTIK dengan main_gui.py /
@@ -119,7 +154,7 @@ class ProviderRun:
 # supaya hasil test benar-benar merepresentasikan apa yang akan terjadi di
 # aplikasi sungguhan, bukan konfigurasi test yang beda sendiri. ----------
 
-def _build_gemini_extractor() -> MemoryExtractor:
+def _build_gemini_extractor():
     from config.settings import GEMINI_API_KEY
     from config.constants import MODEL_NAME
 
@@ -132,10 +167,10 @@ def _build_gemini_extractor() -> MemoryExtractor:
         system_prompt=EXTRACTION_SYSTEM_PROMPT,
         temperature=0.0,
     )
-    return MemoryExtractor(provider=provider), MODEL_NAME
+    return MemoryExtractor(provider=provider), MODEL_NAME, provider
 
 
-def _build_local_extractor(model_name: str, base_url: str) -> MemoryExtractor:
+def _build_local_extractor(model_name: str, base_url: str):
     provider = LocalProvider(
         system_prompt=EXTRACTION_SYSTEM_PROMPT,
         model_name=model_name,
@@ -144,7 +179,7 @@ def _build_local_extractor(model_name: str, base_url: str) -> MemoryExtractor:
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )
-    return MemoryExtractor(provider=provider), model_name
+    return MemoryExtractor(provider=provider), model_name, provider
 
 
 def _run_case(extractor: MemoryExtractor, memory_manager: MemoryManager,
@@ -177,19 +212,45 @@ def _run_provider(provider_label: str, extractor_factory, test_id_prefix: str) -
     print(f"\n{'=' * 60}\n{provider_label} — menjalankan test...\n{'=' * 60}")
 
     try:
-        extractor, model_name = extractor_factory()
+        extractor, model_name, provider = extractor_factory()
     except Exception as e:
         print(f"❌ Gagal menyiapkan provider {provider_label}: {e}")
         return ProviderRun(provider_label, "unknown", fatal_error=str(e))
 
     run = ProviderRun(provider_label, model_name)
 
-    # v2.2.2: SQLite TEMPORARY, dibuang setelah proses selesai — TIDAK
-    # PERNAH menyentuh database/memory.db (memori jangka panjang Arona
-    # yang asli). MemoryManager dipakai APA ADANYA (bukan ditulis ulang),
-    # cuma db_path-nya diarahkan ke file sementara — parameter ini SUDAH
-    # ADA di constructor sejak awal, bukan penambahan baru.
-    with tempfile.TemporaryDirectory(prefix="arona_memory_quality_test_") as tmpdir:
+    # v2.2.2 hotfix (temuan Teacher: 14/14 hasil Local kosong tanpa error
+    # tercatat sama sekali — lihat _connectivity_check docstring). Kalau
+    # provider TIDAK bisa dihubungi sama sekali, HENTIKAN di sini dengan
+    # fatal_error yang jelas — JANGAN lanjut menjalankan 14 test case yang
+    # hasilnya cuma akan kosong semua secara ambigu (tidak bisa dibedakan
+    # dari "model menilai dengan benar tidak ada fakta").
+    connectivity_ok, connectivity_detail = _connectivity_check(provider, provider_label)
+    run.connectivity_ok = connectivity_ok
+    run.connectivity_detail = connectivity_detail
+    if not connectivity_ok:
+        run.fatal_error = f"Connectivity check gagal, test matrix DIBATALKAN untuk provider ini: {connectivity_detail}"
+        print(f"  ⚠️  {provider_label} TIDAK bisa dihubungi — test matrix untuk provider ini DILEWATI (bukan dipaksa jalan dengan hasil kosong yang ambigu).")
+        return run
+
+    # v2.2.2 hotfix: SQLite TEMPORARY, dibuang setelah proses selesai —
+    # TIDAK PERNAH menyentuh database/memory.db (memori jangka panjang
+    # Arona yang asli). MemoryManager dipakai APA ADANYA (bukan ditulis
+    # ulang), cuma db_path-nya diarahkan ke file sementara — parameter ini
+    # SUDAH ADA di constructor sejak awal, bukan penambahan baru.
+    #
+    # `ignore_cleanup_errors=True`: pertahanan lapis KEDUA. Akar masalah
+    # asli (koneksi SQLite yang tidak pernah ditutup di
+    # database/memory_manager.py -> PermissionError WinError 32 di Windows
+    # saat direktori ini dibersihkan) SUDAH diperbaiki di sumbernya
+    # (_connect() sekarang benar-benar menutup koneksi). Parameter ini
+    # murni jaga-jaga tambahan supaya SEKALIPUN ada file lock transien lain
+    # di masa depan (mis. antivirus Windows kebetulan sedang scan file
+    # tepat saat itu), seluruh test run & laporan yang sudah susah payah
+    # dikumpulkan TIDAK ikut hilang gara-gara crash di baris cleanup paling
+    # akhir — direktori temp yang gagal dihapus akan dibersihkan OS sendiri
+    # nanti (harmless, cuma beberapa KB).
+    with tempfile.TemporaryDirectory(prefix="arona_memory_quality_test_", ignore_cleanup_errors=True) as tmpdir:
         temp_db_path = Path(tmpdir) / "test_memory.db"
         memory_manager = MemoryManager(db_path=temp_db_path)
         print(f"(Memory sementara khusus test — tidak menyentuh memory.db asli: {temp_db_path})\n")
@@ -286,6 +347,21 @@ def _build_report(runs: list) -> str:
         "Laporan ini dibuat otomatis oleh `test_memory_quality_validation.py`. "
         "T09 (GUI responsiveness) dan T10 (Developer Dashboard) TIDAK ada di "
         "sini — perlu observasi manual, lihat bagian paling bawah.",
+        "",
+        "## Provider Connectivity Check",
+        "",
+        "Dicek LANGSUNG ke provider (di luar MemoryExtractor, jadi error TIDAK "
+        "tertelan try/except internal) SEBELUM test matrix jalan — supaya hasil "
+        "kosong bisa dibedakan antara \"provider memang tidak bisa dihubungi\" "
+        "vs \"model menilai dengan benar tidak ada fakta\".",
+        "",
+    ]
+
+    for run in runs:
+        status = "✅ OK" if run.connectivity_ok else ("❌ GAGAL" if run.connectivity_ok is False else "⚠️ Tidak dicek (gagal setup provider)")
+        lines.append(f"- **{run.provider_name}**: {status} — {run.connectivity_detail or run.fatal_error or ''}")
+
+    lines += [
         "",
         "## Test Matrix",
         "",
