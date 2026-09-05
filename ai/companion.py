@@ -341,6 +341,13 @@ class Companion:
             return "unknown"
         return self._vision.get_mode().value
 
+    def get_vision_provider_name(self) -> str:
+        """v2.3 §18: passthrough READ-ONLY tipis ke Vision.get_provider_name()
+        — pola identik get_vision_mode() di atas."""
+        if self._vision is None:
+            return "unknown"
+        return self._vision.get_provider_name()
+
     # ---------- Routine (Developer Panel prep v0.9.5, Routine GUI v1.6) ----------
 
     def get_pending_routine_events(self) -> list[RoutineEvent]:

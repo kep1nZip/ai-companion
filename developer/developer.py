@@ -83,7 +83,8 @@ class DeveloperService:
     def get_vision(self) -> VisionSnapshot:
         try:
             mode = self._companion.get_vision_mode()
-            return build_vision_snapshot(self._companion.current_vision_context(), mode=mode)
+            provider = self._companion.get_vision_provider_name()
+            return build_vision_snapshot(self._companion.current_vision_context(), mode=mode, provider=provider)
         except Exception as e:
             logger.warning("Developer: gagal ambil vision snapshot: {}", e)
             return build_vision_snapshot(None)

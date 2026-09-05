@@ -343,6 +343,11 @@ class DeveloperDashboard(QDialog):
     def _render_vision(self, snapshot: DeveloperSnapshot) -> None:
         v = snapshot.vision
         lines = [
+            # v2.3 §18: baris provider paling atas — Teacher paling sering
+            # ingin tahu "yang aktif sekarang Local atau Gemini?" duluan
+            # sebelum status mode/freshness (pola sama dengan card Memory
+            # Extraction v2.1/v2.2).
+            f"Provider: {(v.provider or 'unknown').capitalize()}",
             f"Mode: {v.mode.upper() if v.mode else 'Not available'}",
             f"Fresh: {_yes_no(v.is_fresh)}",
             f"Age: {_fmt(round(v.age_seconds, 1) if v.age_seconds is not None else None, ' s')}",

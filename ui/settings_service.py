@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import find_dotenv, set_key
 
 from config import constants
-from config.settings import GEMINI_API_KEY, AI_PROVIDER, LOCAL_PROVIDER_MODEL_NAME, MEMORY_PROVIDER
+from config.settings import GEMINI_API_KEY, AI_PROVIDER, LOCAL_PROVIDER_MODEL_NAME, MEMORY_PROVIDER, VISION_PROVIDER
 from config.logger import logger
 
 
@@ -30,7 +30,9 @@ class SettingsSnapshot:
     .env sejak v2.0 Step 6, cuma belum pernah di-expose ke GUI), dan
     memory_provider (v2.2 — pola identik, lewat .env, TIDAK ada
     local_memory_model_name terpisah karena Local Memory Extraction reuse
-    LOCAL_PROVIDER_MODEL_NAME yang sama dengan chat, lihat config/settings.py)."""
+    LOCAL_PROVIDER_MODEL_NAME yang sama dengan chat, lihat config/settings.py),
+    dan vision_provider (v2.3 — pola identik lagi, TIDAK ada
+    local_vision_model_name terpisah untuk alasan yang sama)."""
 
     version: str
     theme: str
@@ -45,6 +47,7 @@ class SettingsSnapshot:
     ai_provider: str  # v2.0 Step 9: "local" | "gemini"
     local_provider_model_name: str  # v2.0 Step 9
     memory_provider: str  # v2.2: "local" | "gemini" — keputusan TERPISAH dari ai_provider
+    vision_provider: str  # v2.3: "local" | "gemini" — keputusan TERPISAH lagi
 
 
 class SettingsService:
@@ -73,6 +76,7 @@ class SettingsService:
             ai_provider=AI_PROVIDER,
             local_provider_model_name=LOCAL_PROVIDER_MODEL_NAME,
             memory_provider=MEMORY_PROVIDER,
+            vision_provider=VISION_PROVIDER,
         )
 
     def reveal_api_key(self) -> str:
@@ -175,8 +179,34 @@ class SettingsService:
             normalized,
         )
 
-    # ---------- Shared .env write helper ----------
+    # ---------- Vision Provider (v2.3) ----------
 
+    def validate_vision_provider(self, value: str) -> str | None:
+        """v2.3: pola identik validate_memory_provider — reuse whitelist yang
+        sama (_VALID_PROVIDERS)."""
+        if value.strip().lower() not in self._VALID_PROVIDERS:
+            return f"Vision provider must be one of: {', '.join(self._VALID_PROVIDERS)}."
+        return None
+
+    def save_vision_provider_settings(self, vision_provider: str) -> None:
+        """Tulis VISION_PROVIDER ke .env yang sama. TIDAK ADA local model
+        name terpisah untuk ditulis di sini (§7 — Local Vision reuse
+        LOCAL_PROVIDER_MODEL_NAME yang sudah ada). Restart tetap wajib —
+        Vision(image_analyzer=...) di-construct SEKALI saat startup
+        (main_gui.py), sama seperti Language/Memory Provider."""
+        error = self.validate_vision_provider(vision_provider)
+        if error:
+            raise SettingsSaveError(error)
+
+        normalized = vision_provider.strip().lower()
+        self._write_env_key("VISION_PROVIDER", normalized)
+        logger.info(
+            "SettingsService: Vision provider diperbarui ke '{}' di .env "
+            "(restart dibutuhkan untuk berlaku).",
+            normalized,
+        )
+
+    # ---------- Shared .env write helper ----------
     def _write_env_key(self, key: str, value: str) -> None:
         # BUGFIX (temuan Teacher): SEBELUMNYA pakai find_dotenv(usecwd=True)
         # di sini — itu resolve berdasar CURRENT WORKING DIRECTORY app

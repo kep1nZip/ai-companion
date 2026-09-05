@@ -65,6 +65,7 @@ class SettingsPage(QWidget):
         self._api_key_dirty = False
         self._provider_dirty = False
         self._memory_provider_dirty = False  # v2.2: dipisah dari _provider_dirty (Language Provider)
+        self._vision_provider_dirty = False  # v2.3: dipisah lagi, keputusan independen
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -136,6 +137,22 @@ class SettingsPage(QWidget):
         layout.addLayout(memory_provider_row)
 
         self._memory_provider_status_value = self._add_readonly_row(layout, "Memory Status")
+
+        # v2.3: Vision Provider — pola IDENTIK Memory Provider di atas, dua
+        # baris di atas ini. TIDAK ADA field "Local Model" kedua (Local
+        # Vision reuse LOCAL_PROVIDER_MODEL_NAME yang sama, §7).
+        vision_provider_row = QHBoxLayout()
+        vision_provider_label = QLabel("Vision Provider")
+        vision_provider_label.setObjectName("settingsFieldLabel")
+        vision_provider_row.addWidget(vision_provider_label)
+
+        self._vision_provider_combo = QComboBox()
+        self._vision_provider_combo.addItems(["Local", "Gemini"])
+        self._vision_provider_combo.currentIndexChanged.connect(self._on_vision_provider_changed)
+        vision_provider_row.addWidget(self._vision_provider_combo, stretch=1)
+        layout.addLayout(vision_provider_row)
+
+        self._vision_provider_status_value = self._add_readonly_row(layout, "Vision Status")
 
         api_key_row = QHBoxLayout()
         api_key_label = QLabel("API Key")
@@ -264,10 +281,18 @@ class SettingsPage(QWidget):
         self._memory_provider_combo.blockSignals(False)
         self._update_memory_provider_status(snapshot.memory_provider)
 
+        # v2.3: reset tampilan Vision Provider dari snapshot, pola SAMA
+        # persis dengan Memory Provider di atas.
+        self._vision_provider_combo.blockSignals(True)
+        self._vision_provider_combo.setCurrentText(snapshot.vision_provider.capitalize())
+        self._vision_provider_combo.blockSignals(False)
+        self._update_vision_provider_status(snapshot.vision_provider)
+
         self._error_label.hide()
         self._api_key_dirty = False
         self._provider_dirty = False
         self._memory_provider_dirty = False
+        self._vision_provider_dirty = False
         self._sync_dirty_ui()
 
     def _update_provider_field_visibility(self, provider: str) -> None:
@@ -292,6 +317,13 @@ class SettingsPage(QWidget):
             self._memory_provider_status_value.setText("● Local memory provider configured")
         else:
             self._memory_provider_status_value.setText("● Gemini memory provider configured")
+
+    def _update_vision_provider_status(self, provider: str) -> None:
+        # v2.3: pola IDENTIK dengan _update_memory_provider_status di atas.
+        if provider.strip().lower() == "local":
+            self._vision_provider_status_value.setText("● Local vision provider configured")
+        else:
+            self._vision_provider_status_value.setText("● Gemini vision provider configured")
 
     # ---------- API Key actions ----------
 
@@ -330,10 +362,19 @@ class SettingsPage(QWidget):
         self._memory_provider_dirty = True
         self._sync_dirty_ui()
 
+    # ---------- Vision Provider actions (v2.3) ----------
+
+    def _on_vision_provider_changed(self, _index: int) -> None:
+        self._vision_provider_dirty = True
+        self._sync_dirty_ui()
+
     # ---------- Shared dirty state ----------
 
     def _sync_dirty_ui(self) -> None:
-        dirty = self._api_key_dirty or self._provider_dirty or self._memory_provider_dirty
+        dirty = (
+            self._api_key_dirty or self._provider_dirty
+            or self._memory_provider_dirty or self._vision_provider_dirty
+        )
         self._apply_button.setEnabled(dirty)
         self._cancel_button.setEnabled(dirty)
         self._restart_label.setVisible(dirty)
@@ -376,6 +417,17 @@ class SettingsPage(QWidget):
                 self._show_error(str(e))
                 return
             logger.info("Settings GUI: Memory Extraction provider diperbarui, restart dibutuhkan.")
+
+        # v2.3: dipisah dari _memory_provider_dirty — pola sama lagi.
+        if self._vision_provider_dirty:
+            try:
+                self._service.save_vision_provider_settings(
+                    vision_provider=self._vision_provider_combo.currentText(),
+                )
+            except SettingsSaveError as e:
+                self._show_error(str(e))
+                return
+            logger.info("Settings GUI: Vision provider diperbarui, restart dibutuhkan.")
 
         logger.info("Settings GUI: perubahan disimpan.")
         self._load_snapshot()

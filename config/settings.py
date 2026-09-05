@@ -50,3 +50,20 @@ LOCAL_PROVIDER_MODEL_NAME = os.getenv("LOCAL_PROVIDER_MODEL_NAME", "qwen3-vl-8b"
 # MODEL LM Studio YANG SAMA dengan chat (kalau Language Provider juga local),
 # bukan instance kedua.
 MEMORY_PROVIDER = os.getenv("MEMORY_PROVIDER", "gemini").strip().lower()
+
+# v2.3 — Local Vision: KEPUTUSAN TERPISAH lagi dari AI_PROVIDER dan
+# MEMORY_PROVIDER (§6: Language/Memory/Vision masing-masing provider policy
+# sendiri-sendiri, tidak ada yang otomatis mengikuti yang lain). Default
+# TETAP "gemini" dengan alasan PERSIS SAMA seperti MEMORY_PROVIDER di atas —
+# belum ada siklus validasi kualitas Local Vision yang selesai & dikonfirmasi
+# Teacher (v2.3 §6: "Perubahan Local menjadi default hanya boleh dilakukan
+# setelah validasi kualitas Local Vision selesai. Jangan mengubah default
+# hanya karena provider Local sudah tersedia."). "gemini" (default) | "local".
+#
+# TIDAK ADA LOCAL_VISION_MODEL_NAME/LOCAL_VISION_BASE_URL terpisah (§7) —
+# Local Vision SENGAJA reuse LOCAL_PROVIDER_MODEL_NAME/LOCAL_PROVIDER_BASE_URL
+# yang sama dipakai chat & Memory Extraction Local — audit kode (vision/
+# local_image_analyzer.py) tidak menemukan kebutuhan teknis nyata untuk
+# konfigurasi terpisah (§7: "kecuali audit kode membuktikan pemisahan
+# tersebut benar-benar diperlukan" — tidak terbukti perlu).
+VISION_PROVIDER = os.getenv("VISION_PROVIDER", "gemini").strip().lower()

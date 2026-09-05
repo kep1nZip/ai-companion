@@ -16,14 +16,16 @@ class VisionSnapshot:
     ttl: Optional[float]
     is_fresh: Optional[bool]
     mode: Optional[str]  # v1.7 §13: "off" | "manual" | "auto" | "unknown" — dari Companion.get_vision_mode()
+    provider: Optional[str] = None  # v2.3 §18: "local" | "gemini" | "unknown" — dari Companion.get_vision_provider_name()
 
 
-def build_vision_snapshot(context: Optional[VisionContext], mode: Optional[str] = None) -> VisionSnapshot:
+def build_vision_snapshot(context: Optional[VisionContext], mode: Optional[str] = None,
+                           provider: Optional[str] = None) -> VisionSnapshot:
     if context is None:
         return VisionSnapshot(
             active=False, summary=None, application=None,
             captured_at=None, age_seconds=None, ttl=None, is_fresh=None,
-            mode=mode,
+            mode=mode, provider=provider,
         )
     return VisionSnapshot(
         active=True,
@@ -34,4 +36,5 @@ def build_vision_snapshot(context: Optional[VisionContext], mode: Optional[str] 
         ttl=context.ttl,
         is_fresh=context.is_fresh(),
         mode=mode,
+        provider=provider,
     )
