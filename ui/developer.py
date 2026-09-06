@@ -156,6 +156,13 @@ class DeveloperDashboard(QDialog):
         self._overview_layout.setSpacing(12)
 
         self._health_card = self._add_section("System Health")
+        # v2.4 Phase 2 (Runtime Observability): card baru, ditaruh SEGERA
+        # setelah System Health karena ini info yang paling sering ingin
+        # Teacher tahu duluan (pola sama dengan alasan "Provider paling
+        # atas" di card Vision/Memory Extraction yang sudah ada) — Provider
+        # Map v2.4 Phase 0 §8 menemukan 6 dari 8 field ini belum ada sama
+        # sekali sebelum v2.4.
+        self._providers_card = self._add_section("Providers")
         self._behavior_card = self._add_section("Behavior")
         self._vision_card = self._add_section("Vision")
         self._routine_card = self._add_section("Routine")
@@ -292,6 +299,7 @@ class DeveloperDashboard(QDialog):
         self._timestamp_label.setText(f"Last updated: {local_ts.strftime('%H:%M:%S')}")
 
         self._render_health(snapshot)
+        self._render_providers(snapshot)
         self._render_behavior(snapshot)
         self._render_vision(snapshot)
         self._render_routine(snapshot)
@@ -323,6 +331,20 @@ class DeveloperDashboard(QDialog):
         ]
         self._set_card(self._health_card, "\n".join(lines))
 
+    def _render_providers(self, snapshot: DeveloperSnapshot) -> None:
+        """v2.4 Phase 2: satu card read-only berisi 8 field target Provider
+        Map §8 (AI/Memory/Vision/TTS x Provider/Model). Dashboard TETAP
+        read-only murni — cuma menampilkan data yang sudah ada di
+        DeveloperSnapshot, tidak memanggil subsystem apa pun langsung."""
+        v = snapshot.vision
+        lines = [
+            f"Language: {(snapshot.ai_provider_name or 'unknown').capitalize()} ({snapshot.ai_model_name or 'unknown'})",
+            f"Memory Extraction: {(snapshot.memory_provider_name or 'unknown').capitalize()} ({snapshot.memory_model_name or 'unknown'})",
+            f"Vision: {(v.provider or 'unknown').capitalize()} ({v.model or 'unknown'})",
+            f"TTS: {snapshot.tts_provider_name.capitalize()} ({snapshot.tts_model_name})",
+        ]
+        self._set_card(self._providers_card, "\n".join(lines))
+
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:
         b = snapshot.behavior
         if b is None:
@@ -348,6 +370,7 @@ class DeveloperDashboard(QDialog):
             # sebelum status mode/freshness (pola sama dengan card Memory
             # Extraction v2.1/v2.2).
             f"Provider: {(v.provider or 'unknown').capitalize()}",
+            f"Model: {v.model or 'unknown'}",
             f"Mode: {v.mode.upper() if v.mode else 'Not available'}",
             f"Fresh: {_yes_no(v.is_fresh)}",
             f"Age: {_fmt(round(v.age_seconds, 1) if v.age_seconds is not None else None, ' s')}",
@@ -426,6 +449,7 @@ class DeveloperDashboard(QDialog):
             # tahu "yang aktif sekarang Local atau Gemini?" duluan sebelum
             # angka statistik.
             f"Provider: {(snapshot.memory_provider_name or 'unknown').capitalize()}",
+            f"Model: {snapshot.memory_model_name or 'unknown'}",
             f"Pending: {w.pending}",
             f"Completed: {w.total_completed}",
             f"Failed: {w.total_failed}",

@@ -59,6 +59,8 @@ class Companion:
         performance_tracker: Optional[PerformanceTracker] = None,
         provider: Optional[LanguageModelProvider] = None,
         memory_provider: Optional[LanguageModelProvider] = None,
+        ai_model_name: Optional[str] = None,
+        memory_model_name: Optional[str] = None,
     ):
         prompts = load_prompts()
         system_prompt = build_system_prompt(prompts)
@@ -75,6 +77,17 @@ class Companion:
             model_name=MODEL_NAME,
             system_prompt=system_prompt,
         )
+        # v2.4 Phase 2 (Runtime Observability): pola IDENTIK
+        # `_memory_provider_name` di bawah — nama provider Language
+        # Generation SEBELUMNYA tidak bisa diobservasi sama sekali dari luar
+        # Companion (Provider Map v2.4 Phase 0 §8: satu-satunya dari 3
+        # subsystem provider yang tidak punya getter). `ai_model_name`
+        # OPSIONAL — kalau composition root tidak mengisinya (mis. kode lama
+        # yang belum diupdate, atau test yang construct Companion() polos),
+        # fallback ke MODEL_NAME (nama Gemini default), TIDAK PERNAH None,
+        # supaya Dashboard tidak perlu menangani kasus kosong secara khusus.
+        self._ai_provider_name = "local" if provider is not None else "gemini"
+        self._ai_model_name = ai_model_name or MODEL_NAME
         self._conversation = Conversation()
         self._memory_manager = MemoryManager()
         # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
@@ -82,6 +95,8 @@ class Companion:
         # read-only untuk Developer Dashboard, tidak memengaruhi extract()
         # sama sekali.
         self._memory_provider_name = "local" if memory_provider is not None else "gemini"
+        # v2.4 Phase 2: pola identik _ai_model_name di atas.
+        self._memory_model_name = memory_model_name or MODEL_NAME
         # v2.2 §8/§10: pola IDENTIK dengan `self._gemini` di atas — parameter
         # `memory_provider` opsional supaya provider Memory Extraction bisa
         # disuntik (Local, lewat main_gui.py) TANPA Companion perlu tahu apa
@@ -156,10 +171,16 @@ class Companion:
         contents = self._build_contents(user_input, behavior_state, vision_context, routine_event, decision_result)
 
         try:
-            logger.info("Gemini Request")
+            # v2.4 Phase 1 (Provider Consistency): log sekarang menyebut nama
+            # provider yang BENAR-BENAR aktif (self._ai_provider_name),
+            # BUKAN literal "Gemini" — SEBELUMNYA baris ini tetap tertulis
+            # "Gemini Request" walau AI_PROVIDER=local, membingungkan saat
+            # membaca log (Provider Map v2.4 Phase 0 §1). Tidak ada
+            # perubahan behavior, murni teks log.
+            logger.info("{} Request", self._ai_provider_name.capitalize())
             reply = self._timed("gemini", lambda: self._gemini.generate(contents))
             self._conversation.add_assistant_message(reply)
-            logger.info("Gemini Reply")
+            logger.info("{} Reply", self._ai_provider_name.capitalize())
             logger.info("Arona: {}", reply)
 
             # BUGFIX: sebelumnya routine_event ditandai "completed" (masuk
@@ -251,10 +272,10 @@ class Companion:
             return None
 
         try:
-            logger.info("Gemini Request (Autonomous)")
+            logger.info("{} Request (Autonomous)", self._ai_provider_name.capitalize())
             reply = self._timed("gemini", lambda: self._gemini.generate(contents))
             self._conversation.add_assistant_message(reply)
-            logger.info("Gemini Reply (Autonomous)")
+            logger.info("{} Reply (Autonomous)", self._ai_provider_name.capitalize())
             logger.info("Arona (Autonomous): {}", reply)
 
             if routine_event and self._routine:
@@ -611,6 +632,26 @@ class Companion:
         saat __init__, tidak berubah selama proses hidup — restart wajib
         untuk ganti, sama seperti Language Provider)."""
         return self._memory_provider_name
+
+    def get_ai_provider_name(self) -> str:
+        """v2.4 Phase 2: pola IDENTIK get_memory_provider_name()/
+        get_vision_provider_name() di atas — read-only murni, "local" |
+        "gemini", provider yang BENAR-BENAR dipakai Language Generation."""
+        return self._ai_provider_name
+
+    def get_ai_model_name(self) -> str:
+        """v2.4 Phase 2: read-only murni untuk Developer Dashboard."""
+        return self._ai_model_name
+
+    def get_memory_model_name(self) -> str:
+        """v2.4 Phase 2: read-only murni untuk Developer Dashboard."""
+        return self._memory_model_name
+
+    def get_vision_model_name(self) -> Optional[str]:
+        """v2.4 Phase 2: passthrough READ-ONLY ke Vision.get_model_name() —
+        pola IDENTIK get_vision_provider_name() di bawah. None kalau Vision
+        tidak aktif sama sekali (mis. entrypoint CLI)."""
+        return self._vision.get_model_name() if self._vision else None
 
     # ---------- Shutdown (v2.1 §29/§30) ----------
 

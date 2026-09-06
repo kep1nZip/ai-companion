@@ -1,13 +1,14 @@
 from ai.companion import Companion, RateLimitError, CompanionError
 from ai.commands import is_command, run_command
-from config.constants import APP_NAME, VERSION, MODEL_NAME
+from ai.providers.factory import build_language_provider, build_memory_provider
+from config.constants import APP_NAME, VERSION
 from config.logger import logger
 
 
-def print_banner() -> None:
+def print_banner(ai_model_name: str) -> None:
     print("=" * 40)
     print(f" {APP_NAME} v{VERSION}")
-    print(f" Model: {MODEL_NAME}")
+    print(f" Model: {ai_model_name}")
     print("=" * 40)
     print("Ketik /help untuk melihat daftar perintah.\n")
 
@@ -15,8 +16,28 @@ def print_banner() -> None:
 def main() -> None:
     logger.info("Application starting. {} v{}", APP_NAME, VERSION)
 
-    print_banner()
-    companion = Companion()
+    # v2.4 Phase 1 — Configuration Cleanup: SEBELUMNYA `Companion()` dipanggil
+    # polos tanpa provider apa pun di sini, jadi CLI diam-diam SELALU pakai
+    # Gemini terlepas dari AI_PROVIDER/MEMORY_PROVIDER di .env (Provider Map
+    # v2.4 Phase 0 §7 — temuan audit). Sekarang reuse factory yang SAMA
+    # dengan main_gui.py (ai/providers/factory.py, TIDAK ditulis ulang) —
+    # env yang sama sekarang menghasilkan provider yang sama, apa pun
+    # entrypoint yang Teacher jalankan (GUI atau CLI).
+    #
+    # Vision SENGAJA TIDAK diikutkan di CLI ini — CLI tidak pernah punya
+    # screen capture loop sama sekali sejak awal, menambahkannya sekarang
+    # akan jadi subsystem baru di luar scope v2.4 (audit provider, bukan
+    # penambahan fitur).
+    provider, ai_model_name = build_language_provider()
+    memory_provider, memory_model_name = build_memory_provider()
+
+    print_banner(ai_model_name)
+    companion = Companion(
+        provider=provider,
+        memory_provider=memory_provider,
+        ai_model_name=ai_model_name,
+        memory_model_name=memory_model_name,
+    )
     print("Prompt berhasil dimuat.")
     print(f"{APP_NAME} siap, Teacher.\n")
 

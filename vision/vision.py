@@ -35,7 +35,7 @@ class Vision:
     Chat, spec §24)."""
 
     def __init__(self, screen_capture: ScreenCapture, image_analyzer: ImageAnalyzer, default_ttl: float = 30.0,
-                 provider_name: str = "gemini"):
+                 provider_name: str = "gemini", model_name: str = "unknown"):
         self._screen_capture = screen_capture
         self._image_analyzer = image_analyzer
         self._default_ttl = default_ttl
@@ -48,6 +48,10 @@ class Vision:
         # yang eksplisit diset, tidak melakukan introspeksi/pemanggilan apa
         # pun ke VisionAnalyzer — "Eyes, not hands").
         self._provider_name = provider_name
+        # v2.4 Phase 2 — Runtime Observability: label kedua, pola IDENTIK
+        # `_provider_name` di atas (murni observability, tidak memengaruhi
+        # analyze()/refresh() apa pun, dicatat eksplisit saat construction).
+        self._model_name = model_name
         self._current_context: Optional[VisionContext] = None
         self._last_captured_image: Optional[Image.Image] = None
 
@@ -194,6 +198,11 @@ class Vision:
         construction, restart wajib untuk ganti — sama seperti Language/
         Memory Provider)."""
         return self._provider_name
+
+    def get_model_name(self) -> str:
+        """v2.4 Phase 2: pola IDENTIK get_provider_name() di atas — read-only
+        murni untuk Developer Dashboard."""
+        return self._model_name
 
     def set_mode(self, mode: VisionMode) -> None:
         """Transisi mode sesuai tabel spec §22:

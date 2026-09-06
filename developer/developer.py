@@ -15,7 +15,7 @@ from developer.performance_debug import MetricSnapshot, PerformanceTracker
 from developer.routine_debug import RoutineSnapshot, build_routine_snapshot
 from developer.vision_debug import VisionSnapshot, build_vision_snapshot
 from ai.memory_worker import MemoryWorkerStatus
-from config.constants import LOG_DIR, LOG_FILE
+from config.constants import LOG_DIR, LOG_FILE, TTS_MODEL_NAME
 from config.logger import logger
 
 from avatar.avatar_manager import AvatarState
@@ -45,6 +45,16 @@ class DeveloperSnapshot:
     memory: Optional[MemorySnapshot]
     memory_worker: Optional[MemoryWorkerStatus]
     memory_provider_name: Optional[str]
+    # v2.4 Phase 2 (Runtime Observability) — target Provider Map §8 yang
+    # SEBELUMNYA belum ada sama sekali (6 dari 8 field): AI Provider/Model,
+    # Memory Model, Vision Model, TTS Provider/Model. `vision.provider` dan
+    # `vision.model` sudah ikut lewat `vision` di atas (v2.3/v2.4), jadi
+    # TIDAK diduplikasi jadi field terpisah di sini.
+    ai_provider_name: Optional[str]
+    ai_model_name: Optional[str]
+    memory_model_name: Optional[str]
+    tts_provider_name: str
+    tts_model_name: str
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -84,7 +94,10 @@ class DeveloperService:
         try:
             mode = self._companion.get_vision_mode()
             provider = self._companion.get_vision_provider_name()
-            return build_vision_snapshot(self._companion.current_vision_context(), mode=mode, provider=provider)
+            model = self._companion.get_vision_model_name()
+            return build_vision_snapshot(
+                self._companion.current_vision_context(), mode=mode, provider=provider, model=model
+            )
         except Exception as e:
             logger.warning("Developer: gagal ambil vision snapshot: {}", e)
             return build_vision_snapshot(None)
@@ -145,6 +158,42 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil nama memory provider: {}", e)
             return None
 
+    def get_ai_provider_name(self) -> Optional[str]:
+        """v2.4 Phase 2: read-only murni — pola IDENTIK
+        get_memory_provider_name() di atas."""
+        try:
+            return self._companion.get_ai_provider_name()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil nama AI provider: {}", e)
+            return None
+
+    def get_ai_model_name(self) -> Optional[str]:
+        try:
+            return self._companion.get_ai_model_name()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil nama AI model: {}", e)
+            return None
+
+    def get_memory_model_name(self) -> Optional[str]:
+        try:
+            return self._companion.get_memory_model_name()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil nama memory model: {}", e)
+            return None
+
+    def get_tts_provider_name(self) -> str:
+        """v2.4 Phase 2: TTS TIDAK PUNYA provider selection (§16 spec v2.4 —
+        tetap Gemini, tidak dipindah ke Local dalam v2.4) — jadi ini BUKAN
+        passthrough ke Companion (Companion sama sekali tidak tahu soal TTS,
+        Avatar Independence Policy), melainkan literal tetap "gemini", untuk
+        kelengkapan Dashboard sesuai target Provider Map §8."""
+        return "gemini"
+
+    def get_tts_model_name(self) -> str:
+        """v2.4 Phase 2: baca langsung dari constant yang sudah ada
+        (config/constants.py::TTS_MODEL_NAME) — TIDAK ada konfigurasi baru."""
+        return TTS_MODEL_NAME
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -190,6 +239,11 @@ class DeveloperService:
             memory=self.get_memory(),
             memory_worker=self.get_memory_worker(),
             memory_provider_name=self.get_memory_provider_name(),
+            ai_provider_name=self.get_ai_provider_name(),
+            ai_model_name=self.get_ai_model_name(),
+            memory_model_name=self.get_memory_model_name(),
+            tts_provider_name=self.get_tts_provider_name(),
+            tts_model_name=self.get_tts_model_name(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -205,6 +259,23 @@ class DeveloperService:
         s = self.get_snapshot()
         lines = [f"# Arona Developer Snapshot — {s.timestamp.isoformat()}", "", "## System Health"]
         lines += [f"- {k.capitalize()}: {'✓ OK' if v else '✗ DOWN'}" for k, v in asdict(s.health).items()]
+
+        # v2.4 Phase 2: section "Providers" baru — satu tempat gabungan
+        # untuk 8 field target Provider Map §8 (AI/Memory/Vision/TTS x
+        # Provider/Model). Vision Provider/Model TETAP juga tampil di
+        # section "Vision" di bawah (tidak dihapus dari sana) — section ini
+        # murni ringkasan tambahan, bukan pengganti.
+        lines += [
+            "", "## Providers",
+            f"- Language Provider: {(s.ai_provider_name or 'unknown').capitalize()}",
+            f"- Language Model: {s.ai_model_name or 'unknown'}",
+            f"- Memory Provider: {(s.memory_provider_name or 'unknown').capitalize()}",
+            f"- Memory Model: {s.memory_model_name or 'unknown'}",
+            f"- Vision Provider: {(s.vision.provider or 'unknown').capitalize()}",
+            f"- Vision Model: {s.vision.model or 'unknown'}",
+            f"- TTS Provider: {s.tts_provider_name.capitalize()}",
+            f"- TTS Model: {s.tts_model_name}",
+        ]
 
         for title, obj in [
             ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),
