@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Optional
 
 from ai.memory_extractor import MemoryExtractor, EXTRACTION_SYSTEM_PROMPT
+from ai.companion import _persist_fact
 from ai.providers.base import LanguageModelProvider, ProviderError
 from ai.providers.gemini_provider import GeminiProvider
 from ai.providers.local_provider import LocalProvider
@@ -99,7 +100,17 @@ class CaseResult:
     @property
     def passed(self) -> bool:
         if self.category == "contradiction":
-            return True  # spec §5E: contradiction "boleh" jadi 2 memory, bukan fail
+            # v2.5 Phase 6/9 (§13/§22 spec — "Primary contradiction case"):
+            # SEBELUM v2.5, property ini SELALU return True untuk category
+            # ini (spec v2.2.2 §5E — "contradiction 'boleh' jadi 2 memory,
+            # bukan fail", karena supersession memang belum diimplementasi
+            # sama sekali saat itu). SEKARANG relation model sudah ada
+            # (Phase 1-5), jadi per-case ini TETAP True (satu CaseResult
+            # cuma tahu 1 pesan, bukan hasil akhir gabungan kedua pesan) —
+            # validasi SUNGGUHAN "tepat 1 active memory" dicek di level
+            # provider run (`contradiction_final_state`), BUKAN di sini.
+            # Lihat _build_report() untuk assertion tegas yang sebenarnya.
+            return True
         if self.category == "explicit_fact":
             return self.got_memory and self.error is None
         # noise & hedging: lolos kalau TIDAK menghasilkan memory
@@ -182,10 +193,51 @@ def _build_local_extractor(model_name: str, base_url: str):
     return MemoryExtractor(provider=provider), model_name, provider
 
 
+def _find_related_memories(memory_manager: MemoryManager, user_input: str) -> list:
+    """v2.5 Phase 6/9 (§Maximum reuse) — DUPLIKAT STRUKTUR sengaja dari
+    `Companion._select_related_memories_for_extraction()` (ai/companion.py),
+    BUKAN import langsung, supaya test harness ini tetap berdiri sendiri
+    tanpa perlu construct Companion penuh (yang butuh Vision/provider
+    lengkap) — cuma untuk keperluan test relation-awareness terhadap
+    MemoryExtractor+MemoryManager murni. Filter marker ("__ARONA_...")
+    SAMA PERSIS dengan versi produksi (lihat Phase 0 Audit v2.5 §4/§5) —
+    walau test harness ini pakai DB temporary yang tidak pernah punya
+    marker row sama sekali, filter tetap disertakan supaya perilaku test
+    representatif terhadap produksi."""
+    import re
+    words = [w for w in re.findall(r"\w+", user_input.lower()) if len(w) >= 4]
+    seen, related = set(), []
+    for word in words[:5]:
+        for m in memory_manager.search_memory(word, limit=10):
+            if m.id not in seen and not m.content.startswith("__ARONA_"):
+                seen.add(m.id)
+                related.append(m)
+    return related
+
+
 def _run_case(extractor: MemoryExtractor, memory_manager: MemoryManager,
-              test_id: str, category: str, input_text: str, expected: str) -> CaseResult:
+              test_id: str, category: str, input_text: str, expected: str,
+              use_relation: bool = False) -> CaseResult:
+    """`use_relation=True` (v2.5 Phase 6/9): jalur BARU yang benar-benar
+    menjalankan pipeline relation-aware v2.5 penuh (retrieval -> extract
+    dengan related_memories -> persist lewat `_persist_fact` yang SAMA
+    dengan yang dipakai Companion di produksi — bukan re-implementasi).
+    Dipakai KHUSUS untuk CONTRADICTION_SEQUENCE di bawah, supaya test ini
+    benar-benar menguji perilaku v2.5 (bukan cuma "record only" seperti
+    versi v2.2.2 sebelumnya).
+
+    `use_relation=False` (default) TIDAK BERUBAH SAMA SEKALI dari v2.2.2 —
+    explicit_fact/noise/hedging TIDAK butuh relation-awareness (tidak ada
+    memory terkait yang relevan untuk dibandingkan), jadi tetap pakai
+    `extract()` tanpa `related_memories` + `save_memory()` langsung, persis
+    perilaku lama, supaya regression baseline v2.2.1 tidak ikut berubah
+    perilakunya oleh perubahan v2.5."""
     try:
-        facts = extractor.extract(input_text)
+        if use_relation:
+            related = _find_related_memories(memory_manager, input_text)
+            facts = extractor.extract(input_text, related_memories=related)
+        else:
+            facts = extractor.extract(input_text)
     except Exception as e:
         # v2.2.2 §5B "Provider error ditangani sesuai perilaku yang sudah
         # ada" — MemoryExtractor.extract() SUDAH menangkap ProviderError &
@@ -199,11 +251,24 @@ def _run_case(extractor: MemoryExtractor, memory_manager: MemoryManager,
     saved_ids: list = []
     for fact in facts:
         try:
-            saved = memory_manager.save_memory(fact.get("category", "general"), fact.get("content", ""))
-            saved_count += 1
-            saved_ids.append(saved.id)
+            if use_relation:
+                saved = _persist_fact(memory_manager, fact)
+                if saved is not None:
+                    saved_count += 1
+                    saved_ids.append(saved.id)
+                elif fact.get("relation") == "DUPLICATE":
+                    # touch_memory() tidak mengembalikan Memory baru (§4
+                    # Phase 4) — target_memory_id-nya SENDIRI yang relevan
+                    # dilacak (memory yang diafirmasi ulang), bukan row baru.
+                    saved_count += 1
+                    if fact.get("target_memory_id") is not None:
+                        saved_ids.append(fact["target_memory_id"])
+            else:
+                saved = memory_manager.save_memory(fact.get("category", "general"), fact.get("content", ""))
+                saved_count += 1
+                saved_ids.append(saved.id)
         except Exception as e:
-            return CaseResult(test_id, category, input_text, expected, facts, saved_count, error=f"save_memory gagal: {e}", saved_memory_ids=saved_ids)
+            return CaseResult(test_id, category, input_text, expected, facts, saved_count, error=f"persist gagal: {e}", saved_memory_ids=saved_ids)
 
     return CaseResult(test_id, category, input_text, expected, facts, saved_count, saved_memory_ids=saved_ids)
 
@@ -279,14 +344,19 @@ def _run_provider(provider_label: str, extractor_factory, test_id_prefix: str) -
 
         # Contradiction — dijalankan TERAKHIR & BERURUTAN (bukan diacak),
         # supaya urutan "suka" lalu "tidak suka lagi" persis seperti
-        # skenario Teacher yang sebenarnya. TIDAK ADA percobaan
-        # supersede/replace di sini (spec §7 T04/T08: "Jangan melakukan
+        # skenario Teacher yang sebenarnya.
+        #
+        # v2.5 Phase 6/9: SEKARANG `use_relation=True` — pipeline relation-
+        # aware v2.5 PENUH dijalankan (retrieval -> extract dengan
+        # related_memories -> _persist_fact), BUKAN lagi "record only"
+        # seperti v2.2.2 (komentar lama di sini menulis "Jangan melakukan
         # implementasi supersession hanya untuk membuat test ini terlihat
-        # 'lulus'") — murni mencatat apa yang benar-benar terjadi.
+        # 'lulus'" — sekarang supersession-nya SUNGGUHAN, sudah
+        # diimplementasi & diaudit di Phase 0-5, jadi wajar diuji beneran).
         contradiction_results = []
         for i, text in enumerate(CONTRADICTION_SEQUENCE):
             tid = f"{test_id_prefix}{idx:02d}"
-            r = _run_case(extractor, memory_manager, tid, "contradiction", text, "Catat hasil aktual")
+            r = _run_case(extractor, memory_manager, tid, "contradiction", text, "Persis 1 active memory (v2.5)", use_relation=True)
             contradiction_results.append(r)
             run.results.append(r)
             _print_case(r)
@@ -435,25 +505,39 @@ def _build_report(runs: list) -> str:
                     lines.append(f"- [{r.test_id}] \"{r.input_text}\" -> tersimpan: {r.actual_facts}")
             lines.append("")
 
-    lines += ["## Known Issue — Contradiction (spec §9, TIDAK diselesaikan di v2.2.2)", ""]
+    lines += ["## Contradiction — Primary Test v2.5 (§13/§22: relation-aware, BUKAN lagi \"boleh 2 memory\")", ""]
 
     for run in runs:
         if run.fatal_error:
             continue
+        # v2.5: `contradiction_final_state` diambil dari `load_memories()`
+        # yang SEKARANG default active-only (§Phase 5) — kalau relation
+        # model bekerja benar (SUPERSEDES), memory lama otomatis TIDAK
+        # muncul lagi di sini (statusnya "superseded", bukan dihapus),
+        # jadi len(final_state) == 1 ADALAH bukti langsung pipeline v2.5
+        # bekerja, bukan cuma "dicatat apa adanya" seperti v2.2.2.
         final_state = run.contradiction_final_state
-        lines.append(f"### {run.provider_name} — kondisi akhir memori terkait 'americano' setelah kedua pesan contradiction dikirim:")
+        lines.append(f"### {run.provider_name} — active memory 'americano' setelah kedua pesan contradiction:")
         lines.append("")
         if not final_state:
-            lines.append("- (tidak ada entri tersimpan — kedua pesan contradiction tidak menghasilkan memory sama sekali di provider ini)")
+            lines.append("- ⚠️ (tidak ada entri active tersimpan — kedua pesan tidak menghasilkan memory sama sekali di provider ini, kemungkinan hedging protection terlalu agresif atau provider gagal)")
         else:
             for m in final_state:
-                lines.append(f"- [{m.category}] \"{m.content}\" (updated_at: {m.updated_at})")
-            if len(final_state) > 1:
+                lines.append(f"- [{m.category}] \"{m.content}\" (status: {m.status}, updated_at: {m.updated_at})")
+            if len(final_state) == 1:
                 lines.append("")
                 lines.append(
-                    f"⚠️ **Dikonfirmasi: {len(final_state)} entri kontradiktif hidup berdampingan** "
-                    "— known issue dari v2.2/v2.2.1 masih terjadi di provider ini. Sesuai spec §5E/§9, "
-                    "ini BUKAN kegagalan v2.2.2, cuma dicatat sebagai known issue yang masih terverifikasi ada."
+                    f"✅ **PASS — tepat 1 active memory.** Relation model v2.5 bekerja benar: "
+                    f"memory lama sudah di-supersede (tidak lagi aktif), memory baru \"{final_state[0].content}\" "
+                    "menjadi satu-satunya current state — sesuai kriteria utama v2.5 §22."
+                )
+            else:
+                lines.append("")
+                lines.append(
+                    f"❌ **FAIL — {len(final_state)} entri active hidup berdampingan.** Sesuai spec v2.5 §24 "
+                    "(\"Primary contradiction masih menghasilkan dua active memory\" = FAIL kondisi utama), "
+                    "ini BUKAN lagi ditoleransi seperti v2.2.2 — perlu investigasi apakah model gagal "
+                    "mendeteksi related memory (retrieval kosong) atau gagal memilih relation SUPERSEDES yang benar."
                 )
         lines.append("")
 

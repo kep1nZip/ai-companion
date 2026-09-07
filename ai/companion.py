@@ -10,7 +10,14 @@ from ai.prompt_builder import build_system_prompt
 from ai.providers.base import LanguageModelProvider, ProviderError, ProviderRateLimitError, ProviderResponseError
 from ai.providers.gemini_provider import GeminiProvider
 from ai.conversation import Conversation
-from ai.memory_extractor import MemoryExtractor, EXTRACTION_SYSTEM_PROMPT
+from ai.memory_extractor import (
+    MemoryExtractor,
+    EXTRACTION_SYSTEM_PROMPT,
+    RELATION_NEW,
+    RELATION_DUPLICATE,
+    RELATION_UPDATE,
+    RELATION_SUPERSEDES,
+)
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder
 from database.memory_manager import MemoryManager, Memory
@@ -44,6 +51,55 @@ def _format_memories(memories: list[Memory]) -> str:
         return ""
     lines = [f"- ({m.category}) {m.content}" for m in memories]
     return "Berikut hal-hal yang Arona ingat tentang Teacher:\n" + "\n".join(lines)
+
+
+def _persist_fact(memory_manager: MemoryManager, fact: dict) -> Optional[Memory]:
+    """v2.5 Phase 4 (Persistence Semantics, §11 spec): SATU-SATUNYA tempat
+    yang menerjemahkan relation hasil keputusan MemoryExtractor jadi
+    panggilan MemoryManager yang benar. Module-level (BUKAN method
+    Companion) supaya bisa dipanggil dari closure `_extract_and_save` tanpa
+    closure itu perlu meng-capture `self` (v2.1 §11/§12 — lihat
+    `_schedule_memory_extraction`), DAN supaya bisa direuse langsung oleh
+    `test_memory_quality_validation.py` (v2.5 Phase 6/9 — "Maximum reuse",
+    bukan menulis ulang logic dispatch yang sama di file test).
+
+    Return value (`Optional[Memory]`) SENGAJA ditambahkan supaya pemanggil
+    (test harness) bisa melacak id memory hasil akhir — closure produksi di
+    `_schedule_memory_extraction` TETAP mengabaikan return value ini persis
+    seperti sebelumnya (tidak ada perubahan perilaku produksi). Return
+    `None` untuk relation DUPLICATE (touch_memory tidak membuat/mengubah
+    row yang perlu dilacak lewat objek Memory baru) atau kalau persist
+    gagal.
+
+    Dibungkus try/except PER FAKTA (bukan per-batch) — satu fakta gagal
+    dipersist (mis. target_memory_id sudah tidak ada di DB sama sekali,
+    walau sudah difilter di extract()) TIDAK BOLEH menggagalkan fakta
+    lain dalam pesan yang sama (§25 guardrail #9 "Avoid destructive
+    deletion", error isolation konsisten dengan pola MemoryExtractionWorker
+    v2.1 §22/§31)."""
+    relation = fact.get("relation", RELATION_NEW)
+    category = fact["category"]
+    content = fact["content"]
+    target_id = fact.get("target_memory_id")
+
+    try:
+        if relation == RELATION_SUPERSEDES and target_id is not None:
+            return memory_manager.supersede_memory(target_id, category, content)
+        elif relation == RELATION_UPDATE and target_id is not None:
+            memory_manager.update_memory(target_id, content=content, category=category)
+            return None
+        elif relation == RELATION_DUPLICATE and target_id is not None:
+            memory_manager.touch_memory(target_id)
+            return None
+        else:
+            # RELATION_NEW, atau relation lain tapi target_id kosong
+            # (seharusnya sudah di-fallback ke NEW oleh MemoryExtractor.
+            # extract(), ini jaring pengaman kedua — bukan jalur yang
+            # diharapkan tereksekusi dalam kondisi normal).
+            return memory_manager.save_memory(category, content)
+    except Exception as e:
+        logger.warning("Gagal mempersist fakta memori (relation={}): {}", relation, e)
+        return None
 
 
 class Companion:
@@ -523,6 +579,55 @@ class Companion:
         logger.info("Memory Relevance: tidak ada match, fallback ke recency")
         return self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
 
+    def _select_related_memories_for_extraction(self, user_input: str) -> list[Memory]:
+        """v2.5 Phase 2 (Related Memory Retrieval, §9 spec) — sengaja
+        DUPLIKAT STRUKTUR `_select_relevant_memories()` di atas (bukan
+        di-reuse langsung), BUKAN "refactor besar tak terkait" (guardrail
+        #14 PM) — cuma nambah SATU filter yang penting: exclude memory
+        marker internal (RoutineHistory/InitiativeHistory/InternalState/
+        Relationship, lihat Phase 0 Audit v2.5 §4/§5).
+
+        `_select_relevant_memories()` di atas dipakai untuk CHAT CONTEXT dan
+        SENGAJA TIDAK diubah sama sekali di sini (spec v2.5 §5 rekomendasi
+        (b): filter kontaminasi cukup ditambahkan di jalur BARU ini, bukan
+        mengubah jalur lama yang sudah stabil — kontaminasi ke chat context
+        dicatat sebagai known issue terpisah, BUKAN diperbaiki diam-diam di
+        milestone ini).
+
+        TIDAK fallback ke recency kalau nol match (BEDA dari
+        `_select_relevant_memories`) — kalau memang tidak ada memori
+        terkait, extractor cukup tahu itu ('related_memories=[]' -> prompt
+        relation-aware tidak disisipkan sama sekali, model otomatis
+        menghasilkan relation="NEW" untuk semua fakta, persis §9 "Jangan
+        memberikan seluruh database ke model")."""
+        keywords = [w for w in re.findall(r"\w+", user_input.lower()) if len(w) >= 4]
+
+        seen_ids: set[int] = set()
+        related: list[Memory] = []
+        for word in keywords[:5]:
+            try:
+                matches = self._memory_manager.search_memory(word, limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
+            except Exception as e:
+                logger.warning("Related memory search (extraction) gagal untuk kata '{}': {}", word, e)
+                continue
+            for m in matches:
+                # v2.5 Phase 0 Audit §4/§5: exclude marker row internal state
+                # — TIDAK boleh jadi kandidat UPDATE/SUPERSEDES sama sekali,
+                # itu bukan fakta Teacher. Pola prefix generik ("__ARONA_"),
+                # BUKAN daftar 4 string hardcoded — supaya konsumen
+                # persistence_helper.save_by_marker() BARU di masa depan
+                # otomatis ikut terfilter tanpa perlu mengingat update
+                # daftar ini.
+                if m.id not in seen_ids and not m.content.startswith("__ARONA_"):
+                    seen_ids.add(m.id)
+                    related.append(m)
+            if len(related) >= EPHEMERAL_CONTEXT_MEMORY_LIMIT:
+                break
+
+        if related:
+            logger.info("Related Memory Retrieval (extraction): {} match ditemukan", len(related))
+        return related[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
+
     def _build_autonomous_contents(
         self,
         behavior_state: BehaviorState,
@@ -604,17 +709,26 @@ class Companion:
         add_assistant_message()/rollback_last_message() — Conversation
         SUDAH final untuk giliran ini sebelum baris ini dipanggil (lihat
         ordering di chat()), worker cuma baca/tulis Memory, tidak pernah
-        menyentuh Conversation sama sekali."""
+        menyentuh Conversation sama sekali.
+
+        v2.5 Phase 2/4: retrieval memori terkait (`_select_related_memories_
+        for_extraction`) SENGAJA dipanggil DI DALAM closure (bukan sebelum
+        `submit()`, di main/chat thread) — supaya chat() tetap return
+        seketika PERSIS seperti sebelum v2.5 (nol pekerjaan baru di jalur
+        sinkron), query SQLite untuk retrieval ikut pindah ke background
+        thread yang sama dengan extraction itu sendiri."""
         memory_extractor = self._memory_extractor
         memory_manager = self._memory_manager
+        select_related = self._select_related_memories_for_extraction
 
         def _extract_and_save() -> None:
-            facts = memory_extractor.extract(user_input)
+            related_memories = select_related(user_input)
+            facts = memory_extractor.extract(user_input, related_memories=related_memories)
             if not facts:
                 logger.info("Tidak ada fakta layak diingat dari pesan ini.")
                 return
             for fact in facts:
-                memory_manager.save_memory(fact["category"], fact["content"])
+                _persist_fact(memory_manager, fact)
 
         self._memory_worker.submit(_extract_and_save)
 
