@@ -73,6 +73,28 @@ Kalau TIDAK ada daftar memori terkait sama sekali, atau tidak ada satu pun yang
 benar-benar berkaitan, relation SELALU "NEW" dan target_memory_id null — JANGAN
 menebak-nebak id yang tidak ada di daftar.
 
+PENTING: kalau pesan Teacher menegaskan ulang ("DUPLICATE") ATAU membatalkan/
+membalikkan ("SUPERSEDES") fakta yang sudah ada di daftar memori terkait, kamu
+TETAP WAJIB menyertakan satu entri untuk fakta itu di output — JANGAN
+mengembalikan array kosong hanya karena informasinya "tidak baru". Array kosong
+HANYA untuk basa-basi/noise/hedging yang memang tidak layak diingat sama sekali
+(lihat aturan di atas). Menegaskan ulang atau membatalkan preferensi TETAP
+merupakan sinyal yang harus dicatat lewat relation yang sesuai, BUKAN diabaikan.
+
+Contoh konkret (WAJIB diikuti formatnya, bukan cuma dipahami konsepnya):
+
+Input:
+Memori terkait yang sudah ada:
+- [id=7] (preference) Teacher suka amerciano
+Pesan baru dari Teacher:
+Sekarang aku sudah tidak suka americano lagi.
+
+Output yang BENAR (JANGAN balas array kosong untuk kasus seperti ini):
+[{"category": "preference", "content": "Teacher tidak suka americano lagi", "relation": "SUPERSEDES", "target_memory_id": 7}]
+
+Output yang SALAH untuk kasus di atas: [] — ini SALAH karena pesan Teacher
+JELAS membalikkan fakta yang sudah ada, bukan basa-basi/noise/hedging.
+
 Balas HANYA dengan JSON array, tanpa teks lain, tanpa markdown code fence.
 Format setiap item: {"category": "...", "content": "...", "relation": "NEW"|"DUPLICATE"|"UPDATE"|"SUPERSEDES", "target_memory_id": <angka id atau null>}
 Jika tidak ada yang layak diingat, balas dengan array kosong: []

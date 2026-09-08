@@ -520,7 +520,16 @@ def _build_report(runs: list) -> str:
         lines.append(f"### {run.provider_name} — active memory 'americano' setelah kedua pesan contradiction:")
         lines.append("")
         if not final_state:
-            lines.append("- ⚠️ (tidak ada entri active tersimpan — kedua pesan tidak menghasilkan memory sama sekali di provider ini, kemungkinan hedging protection terlalu agresif atau provider gagal)")
+            lines.append("- ⚠️ (tidak ada entri active tersimpan — kedua pesan tidak menghasilkan memory sama sekali di provider ini)")
+            lines.append("")
+            lines.append(
+                "⚠️ **INCOMPLETE — 0 active memory.** Ini BUKAN state terlarang §24 (\"dua active memory "
+                "kontradiktif\"), tapi juga BUKAN hasil yang diharapkan §22 (\"New memory menjadi current/"
+                "active\"). Kemungkinan model menganggap fakta yang menegaskan-ulang/membatalkan memori "
+                "terkait sebagai \"tidak ada info baru\" lalu mengembalikan array kosong, alih-alih tetap "
+                "menyertakan entri dengan relation DUPLICATE/SUPERSEDES. Perlu dites ulang setelah prompt "
+                "diperjelas (lihat catatan prompt di EXTRACTION_SYSTEM_PROMPT)."
+            )
         else:
             for m in final_state:
                 lines.append(f"- [{m.category}] \"{m.content}\" (status: {m.status}, updated_at: {m.updated_at})")
