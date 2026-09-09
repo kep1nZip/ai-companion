@@ -25,7 +25,7 @@ from behavior.behavior_engine import BehaviorEngine
 from behavior.behavior_state import BehaviorState, DEFAULT_BEHAVIOR_STATE
 from vision.vision import Vision
 from vision.vision_context import VisionContext
-from config.settings import GEMINI_API_KEY
+from config.settings import GEMINI_API_KEY, CONVERSATION_HISTORY_MAX_MESSAGES
 from config.constants import MODEL_NAME, EPHEMERAL_CONTEXT_MEMORY_LIMIT
 from config.logger import logger
 
@@ -371,16 +371,53 @@ class Companion:
         self._conversation.clear()
         logger.info("Conversation history cleared.")
 
+    def get_context_debug_snapshot(self) -> dict:
+        """v2.6 Phase 10 (Observability) — READ-ONLY, murni untuk Developer
+        Dashboard. TIDAK memicu apa pun (tidak capture Vision baru, tidak
+        query provider apa pun) — cuma membaca state yang SUDAH ada.
+
+        `history_cap` None berarti unbounded (default v2.6 — lihat
+        CONVERSATION_HISTORY_MAX_MESSAGES di config/settings.py, Phase 6).
+        `vision_fresh` True kalau `current_vision_context()` mengembalikan
+        sesuatu (Vision.get_context() SUDAH memfilter stale sejak v1.5.2,
+        lihat v2.6 Phase 0 Audit §3 — jadi non-None DI SINI selalu berarti
+        fresh, tidak pernah stale)."""
+        vision_context = self._vision.get_context() if self._vision else None
+        try:
+            active_memory_count = len(self._memory_manager.load_memories(limit=10_000))
+        except Exception:
+            active_memory_count = None
+        return {
+            "history_message_count": self._conversation.message_count(),
+            "history_cap": CONVERSATION_HISTORY_MAX_MESSAGES,
+            "vision_fresh": vision_context is not None,
+            "active_memory_count": active_memory_count,
+        }
+
     # ---------- Memory ----------
 
     def list_memories(self, limit: int = 50) -> list[Memory]:
-        return self._memory_manager.load_memories(limit=limit)
+        # v2.6 Phase 0/2 audit — fix regresi tak disengaja dari v2.5: method
+        # ini dipakai Memory GUI (Teacher-facing, lihat ui/memory_service.py)
+        # untuk melihat/kelola SEMUA memory-nya sendiri, BUKAN untuk chat
+        # context. Default v2.5 (`include_superseded=False`) BENAR untuk
+        # chat context (`_select_relevant_memories` di bawah, TIDAK diubah)
+        # tapi SALAH kalau ikut diwarisi ke sini — Teacher jadi tidak bisa
+        # lihat riwayat memory yang sudah di-supersede lewat relation model
+        # v2.5, padahal masih ada di database (cuma status berubah, tidak
+        # pernah dihapus). GUI SEHARUSNYA menampilkan histori lengkap;
+        # active-only itu kebutuhan khusus jalur chat context, bukan
+        # kebutuhan Teacher saat mengelola memorinya sendiri.
+        return self._memory_manager.load_memories(limit=limit, include_superseded=True)
 
     def search_memories(self, query: str, limit: int = 50) -> list[Memory]:
         """Passthrough read-only ke MemoryManager.search_memory — dipakai Memory
         GUI (v1.1). TIDAK memanggil Gemini/embedding, murni SQL LIKE yang sudah
-        ada di MemoryManager (Search Policy v1.1: tidak ada mesin pencarian baru)."""
-        return self._memory_manager.search_memory(query, limit=limit)
+        ada di MemoryManager (Search Policy v1.1: tidak ada mesin pencarian baru).
+
+        v2.6: `include_superseded=True` — alasan PERSIS SAMA dengan
+        `list_memories()` di atas."""
+        return self._memory_manager.search_memory(query, limit=limit, include_superseded=True)
 
     def delete_memory(self, memory_id: int) -> None:
         self._memory_manager.delete_memory(memory_id)
@@ -502,8 +539,12 @@ class Companion:
 
         v1.9: `user_input` sekarang diteruskan supaya bisa dipakai
         `_select_relevant_memories()` — sebelumnya method ini blind-load N
-        memori terbaru tanpa peduli topik pesan Teacher."""
-        history = self._conversation.get_history()
+        memori terbaru tanpa peduli topik pesan Teacher.
+
+        v2.6 Phase 6: `CONVERSATION_HISTORY_MAX_MESSAGES` (default None =
+        unbounded, TIDAK BERUBAH dari sebelumnya kecuali Teacher eksplisit
+        set di .env) — lihat config/settings.py & Conversation.get_history()."""
+        history = self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES)
         contents: list[types.Content] = []
 
         try:
@@ -566,7 +607,18 @@ class Companion:
                 logger.warning("Memory relevance search gagal untuk kata '{}': {}", word, e)
                 continue
             for m in matches:
-                if m.id not in seen_ids:
+                # v2.6 Phase 1 (Context Hygiene, §26 spec v2.6 — resmi masuk
+                # scope sekarang, SEBELUMNYA sengaja ditunda sebagai known
+                # issue terpisah di v2.5 Phase 0 Audit §5). Filter PERSIS
+                # sama dengan yang sudah ada di
+                # `_select_related_memories_for_extraction()` (v2.5) — marker
+                # internal (RoutineHistory/InitiativeHistory/InternalState/
+                # Relationship) TIDAK BOLEH bocor sebagai "memori tentang
+                # Teacher" ke chat context. Solusi di context boundary ini
+                # (retrieval), BUKAN menghapus/mengubah memory internal itu
+                # sendiri (§26: "solusi harus dilakukan di context boundary,
+                # bukan dengan menghapus memory internal").
+                if m.id not in seen_ids and not m.content.startswith("__ARONA_"):
                     seen_ids.add(m.id)
                     relevant.append(m)
             if len(relevant) >= EPHEMERAL_CONTEXT_MEMORY_LIMIT:
@@ -577,7 +629,16 @@ class Companion:
             return relevant[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
 
         logger.info("Memory Relevance: tidak ada match, fallback ke recency")
-        return self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
+        # v2.6 Phase 1: fallback recency JUGA rawan kontaminasi marker — malah
+        # LEBIH rawan dari keyword search, karena marker internal
+        # (RoutineHistory/InitiativeHistory/dst) di-refresh `updated_at`-nya
+        # tiap kali subsystem itu update state (kemungkinan lebih sering
+        # daripada Teacher bikin memory baru), jadi wajar mendominasi urutan
+        # "N paling baru" kalau tidak difilter. `include_superseded=False`
+        # (default, TIDAK diubah) tetap berlaku seperti biasa.
+        recent = self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT * 2)
+        filtered = [m for m in recent if not m.content.startswith("__ARONA_")]
+        return filtered[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
 
     def _select_related_memories_for_extraction(self, user_input: str) -> list[Memory]:
         """v2.5 Phase 2 (Related Memory Retrieval, §9 spec) — sengaja
@@ -644,8 +705,10 @@ class Companion:
         Arona sebelumnya) yang membingungkan Gemini. ContextBuilder TETAP
         satu-satunya sumber teksnya (reuse self._context_builder.build() apa
         adanya, TIDAK diduplikasi) — ini murni keputusan URUTAN di level
-        Companion, orchestrator tetap satu."""
-        history = self._conversation.get_history()
+        Companion, orchestrator tetap satu.
+
+        v2.6 Phase 6: cap sama persis seperti _build_contents()."""
+        history = self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES)
         contents: list[types.Content] = list(history)
 
         try:

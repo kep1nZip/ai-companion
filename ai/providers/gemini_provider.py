@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from google.genai import types
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, ServerError
 
 from ai.gemini import GeminiClient, GeminiResponseError
 from ai.providers.base import LanguageModelProvider, ProviderError, ProviderRateLimitError, ProviderResponseError
+from config.logger import logger
+
+# v2.6.1 — Reliability fix (dilaporkan Teacher: "google.genai.errors.
+# ServerError: 503 UNAVAILABLE... high demand" sering muncul saat pakai
+# Gemini). Root cause DIKONFIRMASI lewat audit: `ServerError` (5xx, transient
+# — overload SEMENTARA di sisi Google, BUKAN bug di kode kita) SEBELUMNYA
+# TIDAK DITANGKAP SAMA SEKALI di sini — cuma `ClientError` (4xx) dan
+# `GeminiResponseError` yang diterjemahkan. Akibatnya `ServerError` mentah
+# lolos ke atas, melewati `Companion.chat()`'s `except ProviderError` (baris
+# ~275) begitu saja karena `ServerError` BUKAN subclass `ProviderError` —
+# Teacher dapat traceback mentah alih-alih pesan error yang jelas.
+_TRANSIENT_RETRY_ATTEMPTS = 3  # 1 percobaan awal + 2 retry
+_TRANSIENT_RETRY_BACKOFF_SECONDS = 1.5  # bertambah linear tiap percobaan (1.5s, 3.0s)
 
 
 class GeminiProvider(LanguageModelProvider):
@@ -35,11 +49,28 @@ class GeminiProvider(LanguageModelProvider):
         )
 
     def generate(self, contents: list[types.Content]) -> str:
-        try:
-            return self._client.send(contents)
-        except GeminiResponseError as e:
-            raise ProviderResponseError(str(e)) from e
-        except ClientError as e:
-            if "429" in str(e):
-                raise ProviderRateLimitError(str(e)) from e
-            raise ProviderError(str(e)) from e
+        for attempt in range(1, _TRANSIENT_RETRY_ATTEMPTS + 1):
+            try:
+                return self._client.send(contents)
+            except GeminiResponseError as e:
+                raise ProviderResponseError(str(e)) from e
+            except ClientError as e:
+                if "429" in str(e):
+                    raise ProviderRateLimitError(str(e)) from e
+                raise ProviderError(str(e)) from e
+            except ServerError as e:
+                # v2.6.1: 5xx = masalah SEMENTARA di sisi Google (server
+                # overload), BUKAN salah konfigurasi Teacher — retry singkat
+                # ke provider yang SAMA (BUKAN silent fallback ke Local/
+                # provider lain, itu tetap dilarang §5.1 v2.4) sebelum
+                # menyerah dengan ProviderError yang jelas.
+                if attempt < _TRANSIENT_RETRY_ATTEMPTS:
+                    wait_seconds = _TRANSIENT_RETRY_BACKOFF_SECONDS * attempt
+                    logger.warning(
+                        "Gemini ServerError (percobaan {}/{}), retry dalam {}s: {}",
+                        attempt, _TRANSIENT_RETRY_ATTEMPTS, wait_seconds, e,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                logger.error("Gemini ServerError setelah {} percobaan, menyerah: {}", _TRANSIENT_RETRY_ATTEMPTS, e)
+                raise ProviderError(f"Gemini sedang mengalami gangguan sementara (server error): {e}") from e

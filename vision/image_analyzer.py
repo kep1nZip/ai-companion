@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import io
+import time
 from abc import ABC, abstractmethod
 
 from PIL import Image
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError
 
 from config.logger import logger
+
+# v2.6.1 — Reliability fix, pola IDENTIK ai/providers/gemini_provider.py
+# (dilaporkan Teacher, ServerError 503 "high demand" Gemini). Vision AUTO
+# sudah punya retry alami lewat interval capture berikutnya, jadi risiko
+# di sini lebih rendah dari chat (tidak pernah crash — ui/vision_worker.py
+# sudah menangkap `except Exception` broad), tapi tetap diperbaiki supaya
+# log jelas ("gangguan sementara" vs traceback mentah) dan supaya Manual
+# Vision (bukan AUTO, TIDAK ADA retry interval otomatis) tidak langsung
+# gagal cuma karena satu spike sesaat.
+_TRANSIENT_RETRY_ATTEMPTS = 3
+_TRANSIENT_RETRY_BACKOFF_SECONDS = 1.5
 
 VISION_PROMPT = (
     "Describe what is currently visible in this image, in natural language, "
@@ -96,10 +109,24 @@ class GeminiImageAnalyzer(ImageAnalyzer):
         ]
 
         logger.info("Vision Request")
-        response = self._client.models.generate_content(
-            model=self._model_name,
-            contents=contents,
-        )
+        for attempt in range(1, _TRANSIENT_RETRY_ATTEMPTS + 1):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._model_name,
+                    contents=contents,
+                )
+                break
+            except ServerError as e:
+                if attempt < _TRANSIENT_RETRY_ATTEMPTS:
+                    wait_seconds = _TRANSIENT_RETRY_BACKOFF_SECONDS * attempt
+                    logger.warning(
+                        "Gemini Vision ServerError (percobaan {}/{}), retry dalam {}s: {}",
+                        attempt, _TRANSIENT_RETRY_ATTEMPTS, wait_seconds, e,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                logger.error("Gemini Vision ServerError setelah {} percobaan, menyerah: {}", _TRANSIENT_RETRY_ATTEMPTS, e)
+                raise VisionAnalysisError(f"Gemini Vision sedang mengalami gangguan sementara (server error): {e}") from e
         logger.info("Vision Response")
 
         text = response.text

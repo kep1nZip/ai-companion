@@ -55,6 +55,11 @@ class DeveloperSnapshot:
     memory_model_name: Optional[str]
     tts_provider_name: str
     tts_model_name: str
+    # v2.6 Phase 10 (Observability) — Optional[dict] karena
+    # `get_context_debug_snapshot()` (ai/companion.py) tidak selalu ada di
+    # versi Companion lama/test yang belum diupdate; None ditangani sama
+    # seperti field observability lain di file ini (tampil "unknown"/"N/A").
+    context_debug: Optional[dict]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -194,6 +199,16 @@ class DeveloperService:
         (config/constants.py::TTS_MODEL_NAME) — TIDAK ada konfigurasi baru."""
         return TTS_MODEL_NAME
 
+    def get_context_debug(self) -> Optional[dict]:
+        """v2.6 Phase 10: read-only passthrough ke
+        Companion.get_context_debug_snapshot(). Pola try/except IDENTIK
+        getter observability lain di file ini."""
+        try:
+            return self._companion.get_context_debug_snapshot()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil context debug snapshot: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -244,6 +259,7 @@ class DeveloperService:
             memory_model_name=self.get_memory_model_name(),
             tts_provider_name=self.get_tts_provider_name(),
             tts_model_name=self.get_tts_model_name(),
+            context_debug=self.get_context_debug(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -275,6 +291,18 @@ class DeveloperService:
             f"- Vision Model: {s.vision.model or 'unknown'}",
             f"- TTS Provider: {s.tts_provider_name.capitalize()}",
             f"- TTS Model: {s.tts_model_name}",
+        ]
+
+        # v2.6 Phase 10 — section "Context" baru. `context_debug` bisa None
+        # (Companion lama/test yang belum punya get_context_debug_snapshot())
+        # — ditangani sama seperti field observability lain di file ini.
+        cd = s.context_debug
+        cap_text = "unbounded (default)" if not cd or cd.get("history_cap") is None else str(cd["history_cap"])
+        lines += [
+            "", "## Context",
+            f"- History Messages: {cd['history_message_count'] if cd else 'unknown'} (cap: {cap_text})",
+            f"- Vision: {'Fresh' if cd and cd.get('vision_fresh') else 'Not available'}",
+            f"- Active Memory Count (total di DB): {cd['active_memory_count'] if cd and cd.get('active_memory_count') is not None else 'unknown'}",
         ]
 
         for title, obj in [

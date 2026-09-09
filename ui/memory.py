@@ -50,7 +50,14 @@ class MemoryCard(QFrame):
         content_label.setObjectName("memoryCardContent")
         content_label.setWordWrap(True)
 
-        meta_label = QLabel(f"{memory.category}  ·  {_format_timestamp(memory.updated_at)}")
+        # v2.6 Phase 0/2: label status ditambahkan (bukan GUI redesign besar,
+        # cuma memperjelas satu baris meta yang sudah ada) — SEKARANG list
+        # ini bisa berisi memory superseded juga (fix regresi §5 audit v2.6),
+        # jadi Teacher perlu cara membedakan mana yang masih current vs
+        # riwayat lama, supaya tidak salah kira ada 2 fakta aktif yang
+        # bertentangan padahal satu di antaranya sudah digantikan.
+        status_suffix = "" if memory.status == "active" else "  ·  Superseded"
+        meta_label = QLabel(f"{memory.category}  ·  {_format_timestamp(memory.updated_at)}{status_suffix}")
         meta_label.setObjectName("memoryCardMeta")
 
         layout.addWidget(content_label)
@@ -101,9 +108,11 @@ class MemoryDetailView(QWidget):
     def show_memory(self, memory: Memory) -> None:
         self._category_label.setText(memory.category.capitalize())
         self._content_label.setText(memory.content)
+        # v2.6 Phase 0/2: sama seperti card meta di atas.
+        status_line = "" if memory.status == "active" else "\nStatus: Superseded (riwayat, bukan fakta aktif)"
         self._meta_label.setText(
             f"Created: {_format_timestamp(memory.created_at)}   "
-            f"Updated: {_format_timestamp(memory.updated_at)}"
+            f"Updated: {_format_timestamp(memory.updated_at)}{status_line}"
         )
 
 

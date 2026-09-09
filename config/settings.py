@@ -67,3 +67,11 @@ MEMORY_PROVIDER = os.getenv("MEMORY_PROVIDER", "gemini").strip().lower()
 # konfigurasi terpisah (§7: "kecuali audit kode membuktikan pemisahan
 # tersebut benar-benar diperlukan" — tidak terbukti perlu).
 VISION_PROVIDER = os.getenv("VISION_PROVIDER", "gemini").strip().lower()
+
+# v2.6 Phase 6 — Context Budget. SENGAJA default None (TIDAK ADA BATAS,
+# perilaku identik sebelum v2.6) — angka batas TIDAK ditebak di sini,
+# menunggu Teacher melihat baseline nyata lewat Developer Dashboard
+# (v2.6 Phase 10, section "Context") lalu memutuskan sendiri lewat .env
+# kalau memang diperlukan. Kosong/tidak di-set = unbounded (default).
+_raw_history_limit = os.getenv("CONVERSATION_HISTORY_MAX_MESSAGES", "").strip()
+CONVERSATION_HISTORY_MAX_MESSAGES = int(_raw_history_limit) if _raw_history_limit.isdigit() else None

@@ -163,6 +163,12 @@ class DeveloperDashboard(QDialog):
         # Map v2.4 Phase 0 §8 menemukan 6 dari 8 field ini belum ada sama
         # sekali sebelum v2.4.
         self._providers_card = self._add_section("Providers")
+        # v2.6 Phase 10 (Observability) — card baru, ditaruh persis setelah
+        # Providers karena sama-sama informasi "state runtime saat ini"
+        # yang Teacher mungkin ingin cek sambil debug kenapa balasan Arona
+        # terasa aneh/lambat (mis. history sudah sangat panjang, atau
+        # Vision ternyata sudah stale padahal Teacher kira masih fresh).
+        self._context_card = self._add_section("Context")
         self._behavior_card = self._add_section("Behavior")
         self._vision_card = self._add_section("Vision")
         self._routine_card = self._add_section("Routine")
@@ -300,6 +306,7 @@ class DeveloperDashboard(QDialog):
 
         self._render_health(snapshot)
         self._render_providers(snapshot)
+        self._render_context(snapshot)
         self._render_behavior(snapshot)
         self._render_vision(snapshot)
         self._render_routine(snapshot)
@@ -344,6 +351,23 @@ class DeveloperDashboard(QDialog):
             f"TTS: {snapshot.tts_provider_name.capitalize()} ({snapshot.tts_model_name})",
         ]
         self._set_card(self._providers_card, "\n".join(lines))
+
+    def _render_context(self, snapshot: DeveloperSnapshot) -> None:
+        """v2.6 Phase 10: card read-only baru — murni menampilkan
+        `context_debug` yang sudah dikumpulkan `DeveloperService`, TIDAK
+        memanggil Companion/ContextBuilder langsung dari sini (Dashboard
+        tetap read-only, §5 spec v2.6)."""
+        cd = snapshot.context_debug
+        if cd is None:
+            self._set_card(self._context_card, "Not available")
+            return
+        cap = "Unbounded (default)" if cd.get("history_cap") is None else str(cd["history_cap"])
+        lines = [
+            f"History Messages: {cd.get('history_message_count', 'unknown')} (cap: {cap})",
+            f"Vision: {'Fresh' if cd.get('vision_fresh') else 'Not available'}",
+            f"Active Memory Count (total DB): {cd.get('active_memory_count', 'unknown')}",
+        ]
+        self._set_card(self._context_card, "\n".join(lines))
 
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:
         b = snapshot.behavior
