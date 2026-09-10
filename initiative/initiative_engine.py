@@ -36,6 +36,7 @@ class InitiativeEngine:
         routine_event: Optional[RoutineEvent] = None,
         is_voice_active: bool = False,
         is_actively_typing: bool = False,
+        relevant_memory_count: int = 0,
     ) -> DecisionResult:
         suppressed, suppression_reason = check_suppression(vision_context, is_voice_active, is_actively_typing)
 
@@ -50,6 +51,7 @@ class InitiativeEngine:
             vision_context=vision_context,
             routine_event=routine_event,
             hour=now.hour,
+            relevant_memory_count=relevant_memory_count,
         )
 
         score = 0.0
@@ -57,9 +59,16 @@ class InitiativeEngine:
         for rule in self._rules:
             reason = rule.evaluate(ctx)
             if reason is not None:
-                score += rule.weight
-                sign = "+" if rule.weight >= 0 else ""
-                reasons.append(f"{reason} ({sign}{rule.weight:.0f})")
+                # v2.7 Phase 3: `get_weight(ctx)` menggantikan `.weight` statis
+                # langsung — untuk 6 dari 7 rule di DEFAULT_RULES hasilnya
+                # IDENTIK (default `get_weight()` cuma return `self.weight`,
+                # lihat DecisionRule di initiative_rules.py). Hanya
+                # RoutinePendingRule yang sekarang mengembalikan nilai
+                # bervariasi sesuai EventPriority.
+                weight = rule.get_weight(ctx)
+                score += weight
+                sign = "+" if weight >= 0 else ""
+                reasons.append(f"{reason} ({sign}{weight:.1f})")
 
         result = decide(score, self.threshold, reasons)
         logger.info("Decision Score: {:.0f} / threshold {:.0f}", score, self.threshold)

@@ -219,7 +219,10 @@ class Companion:
         decision_result = (
             self._timed(
                 "initiative_update",
-                lambda: self._initiative.update(behavior_state, vision_context, routine_event),
+                lambda: self._initiative.update(
+                    behavior_state, vision_context, routine_event,
+                    relevant_memory_count=self._count_relevant_memories_for_vision(vision_context),
+                ),
             )
             if self._initiative else None
         )
@@ -316,6 +319,7 @@ class Companion:
             lambda: self._initiative.update(
                 behavior_state, vision_context, routine_event,
                 is_voice_active=is_voice_active, is_actively_typing=is_actively_typing,
+                relevant_memory_count=self._count_relevant_memories_for_vision(vision_context),
             ),
         )
 
@@ -515,6 +519,30 @@ class Companion:
         return self._initiative.get_cooldowns() if self._initiative else {}
 
     # ---------- Internal ----------
+
+    def _count_relevant_memories_for_vision(self, vision_context: Optional[VisionContext]) -> int:
+        """v2.7 Phase 5+6 — Vision (application/summary) dipakai sebagai
+        QUERY ke retrieval Memory yang SUDAH ADA (`_select_relevant_
+        memories()`, TIDAK dibuat ulang, TIDAK memanggil provider/LLM apa
+        pun — murni SQL keyword search yang sama persis dipakai chat
+        context). Cuma mengembalikan JUMLAH (int), BUKAN daftar Memory
+        (keputusan eksplisit Teacher — Initiative tidak boleh menerima isi
+        memory penuh).
+
+        Kalau Vision tidak aktif/kosong (None — baik karena OFF maupun
+        stale, keduanya sudah di-gate `Vision.get_context()` sejak v1.5.2/
+        v2.6), return 0 — tidak ada query yang masuk akal, rule ini
+        simply tidak berkontribusi (bukan dipaksakan)."""
+        if vision_context is None:
+            return 0
+        query_text = f"{vision_context.application or ''} {vision_context.summary or ''}".strip()
+        if not query_text:
+            return 0
+        try:
+            return len(self._select_relevant_memories(query_text))
+        except Exception as e:
+            logger.warning("Gagal hitung relevant_memory_count untuk Initiative: {}", e)
+            return 0
 
     def _update_behavior(self, user_input: str) -> BehaviorState:
         try:
