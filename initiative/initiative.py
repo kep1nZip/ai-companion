@@ -51,6 +51,7 @@ class Initiative:
         is_voice_active: bool = False,
         is_actively_typing: bool = False,
         relevant_memory_count: int = 0,
+        conversation_closed: bool = False,
     ) -> DecisionResult:
         """Hitung ulang decision. Cooldown & Budget dicek SEBAGAI HARD GATE
         (sama level dengan Suppression) SEBELUM scoring — Conversation Budget
@@ -67,6 +68,7 @@ class Initiative:
             result = self._engine.compute(
                 behavior_state, vision_context, routine_event, is_voice_active, is_actively_typing,
                 relevant_memory_count=relevant_memory_count,
+                conversation_closed=conversation_closed,
             )
 
         self._last_result = result

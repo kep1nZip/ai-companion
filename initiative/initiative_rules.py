@@ -25,6 +25,11 @@ class DecisionContext:
     # "jangan memasukkan daftar memory lengkap ke Initiative"). Default 0
     # supaya pemanggil lama (kalau ada) tidak perlu diubah — backward compat.
     relevant_memory_count: int = 0
+    # v2.8 Phase 5 (Conversation Closure) — SATU boolean, dihitung Companion
+    # dari `Conversation.get_last_user_message()` lewat
+    # `ai/conversation_signals.py::detect_closure()` (pattern matching murni,
+    # TIDAK ADA LLM kedua). Default False = backward compat penuh.
+    conversation_closed: bool = False
 
 
 class DecisionRule:
@@ -237,6 +242,39 @@ class MemoryRelevanceRule(DecisionRule):
         return None
 
 
+class ConversationClosureRule(DecisionRule):
+    """v2.8 Phase 5 (Conversation Closure).
+
+    Reuse total: sinyal `conversation_closed` DIHITUNG di Companion (lewat
+    `ai/conversation_signals.py::detect_closure()`, pattern matching murni)
+    SEBELUM `DecisionContext` dibuat — rule ini cuma KONSUMEN boolean,
+    persis pola `MemoryRelevanceRule` (v2.7). Initiative TIDAK PERNAH
+    membaca isi percakapan sendiri.
+
+    SENGAJA soft penalty (BUKAN hard suppression seperti `check_suppression()`
+    untuk meeting/coding) — spec v2.8 §10 eksplisit: "Closure signal DAPAT
+    digunakan untuk MEMBANTU keputusan Initiative", bukan mengontrolnya
+    secara mutlak. Kalau closure signal salah deteksi sesekali, dampaknya
+    cuma skor turun sedikit, bukan Arona 100% dibungkam.
+
+    Weight = -10.0 — dipilih dari magnitude PALING KECIL yang sudah dipakai
+    rule lain (`MoodBonusRule`/`CuriosityRule`/`MemoryRelevanceRule` sama-
+    sama 10.0), BUKAN angka baru — konsisten dengan alasan yang sama seperti
+    `MemoryRelevanceRule` (v2.7): sinyal baru yang belum tervalidasi lewat
+    pemakaian nyata, dimulai konservatif. Rule ini independen dari
+    `RecentInteractionPenaltyRule` (bisa aktif BERSAMAAN — closure yang baru
+    saja terjadi otomatis juga kena idle_seconds kecil, keduanya menumpuk
+    jadi -30 total, semakin meyakinkan Initiative untuk diam)."""
+
+    def __init__(self, weight: float = -10.0):
+        super().__init__("conversation_closure", weight)
+
+    def evaluate(self, ctx: DecisionContext) -> Optional[str]:
+        if ctx.conversation_closed:
+            return "Teacher baru saja memberi sinyal penutupan percakapan"
+        return None
+
+
 DEFAULT_RULES: list[DecisionRule] = [
     IdleRule(),
     RecentInteractionPenaltyRule(),
@@ -247,6 +285,7 @@ DEFAULT_RULES: list[DecisionRule] = [
     InitiativeLevelRule(),
     RoutinePendingRule(),
     MemoryRelevanceRule(),
+    ConversationClosureRule(),
 ]
 
 DEFAULT_THRESHOLD = 50.0

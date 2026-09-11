@@ -37,6 +37,7 @@ class InitiativeEngine:
         is_voice_active: bool = False,
         is_actively_typing: bool = False,
         relevant_memory_count: int = 0,
+        conversation_closed: bool = False,
     ) -> DecisionResult:
         suppressed, suppression_reason = check_suppression(vision_context, is_voice_active, is_actively_typing)
 
@@ -52,6 +53,7 @@ class InitiativeEngine:
             routine_event=routine_event,
             hour=now.hour,
             relevant_memory_count=relevant_memory_count,
+            conversation_closed=conversation_closed,
         )
 
         score = 0.0

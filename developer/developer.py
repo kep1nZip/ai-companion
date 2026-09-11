@@ -303,6 +303,9 @@ class DeveloperService:
             f"- History Messages: {cd['history_message_count'] if cd else 'unknown'} (cap: {cap_text})",
             f"- Vision: {'Fresh' if cd and cd.get('vision_fresh') else 'Not available'}",
             f"- Active Memory Count (total di DB): {cd['active_memory_count'] if cd and cd.get('active_memory_count') is not None else 'unknown'}",
+            f"- Recent Turns Used: {cd['recent_turns_used'] if cd and cd.get('recent_turns_used') is not None else 'unknown'}",
+            f"- History Filtered: {cd['history_filtered'] if cd and cd.get('history_filtered') is not None else 'unknown'}",
+            f"- Conversation Closure: {'Yes' if cd and cd.get('conversation_closed') else 'No'}",
         ]
 
         for title, obj in [

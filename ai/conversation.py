@@ -57,3 +57,20 @@ class Conversation:
         """v2.6 Phase 10 (Observability) — dipakai Developer Dashboard untuk
         menampilkan baseline nyata ukuran history, TANPA memotong apa pun."""
         return len(self._history)
+
+    def get_last_user_message(self) -> str | None:
+        """v2.8 Phase 5 (Conversation Closure) — Conversation TETAP satu-
+        satunya source of truth (guardrail #3 spec v2.8): method ini cuma
+        MEMBACA `_history` yang sudah ada, TIDAK menyimpan state baru apa
+        pun. Dipakai Companion untuk deteksi closure di JALUR AUTONOMOUS
+        (`check_autonomous_opportunity()`) yang tidak punya `user_input`
+        baru — di jalur `chat()` biasa, `user_input` yang baru saja
+        ditambahkan SUDAH jadi pesan user terakhir, jadi hasilnya identik.
+        Return None kalau belum pernah ada pesan user sama sekali (sesi
+        baru mulai)."""
+        for content in reversed(self._history):
+            if content.role == "user":
+                if content.parts and content.parts[0].text:
+                    return content.parts[0].text
+                return None
+        return None

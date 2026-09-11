@@ -18,6 +18,7 @@ from ai.memory_extractor import (
     RELATION_UPDATE,
     RELATION_SUPERSEDES,
 )
+from ai.conversation_signals import detect_closure
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder
 from database.memory_manager import MemoryManager, Memory
@@ -222,6 +223,7 @@ class Companion:
                 lambda: self._initiative.update(
                     behavior_state, vision_context, routine_event,
                     relevant_memory_count=self._count_relevant_memories_for_vision(vision_context),
+                    conversation_closed=self._detect_conversation_closure(),
                 ),
             )
             if self._initiative else None
@@ -320,6 +322,7 @@ class Companion:
                 behavior_state, vision_context, routine_event,
                 is_voice_active=is_voice_active, is_actively_typing=is_actively_typing,
                 relevant_memory_count=self._count_relevant_memories_for_vision(vision_context),
+                conversation_closed=self._detect_conversation_closure(),
             ),
         )
 
@@ -391,11 +394,25 @@ class Companion:
             active_memory_count = len(self._memory_manager.load_memories(limit=10_000))
         except Exception:
             active_memory_count = None
+
+        # v2.8 Phase 20 — SEMUA angka di bawah dihitung dari data yang SUDAH
+        # ADA (Conversation._history + cap v2.6 + detektor closure v2.8),
+        # TIDAK ADA nilai yang dikarang (spec v2.8 §20 eksplisit: "Tidak
+        # boleh ada nilai yang dibuat-buat"). "Current Topic"/"Follow-up
+        # Detected"/"Topic Shift" SENGAJA TIDAK ditambahkan di sini — audit
+        # Phase 0 v2.8 §9 membuktikan itu butuh classifier sungguhan untuk
+        # diisi jujur, yang berarti STOP CONDITION #1 spec ("Topic detection
+        # requires another LLM") — bukan keputusan yang saya ambil sepihak.
+        history_available = self._conversation.message_count()
+        recent_turns_used = len(self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES))
         return {
-            "history_message_count": self._conversation.message_count(),
+            "history_message_count": history_available,
             "history_cap": CONVERSATION_HISTORY_MAX_MESSAGES,
             "vision_fresh": vision_context is not None,
             "active_memory_count": active_memory_count,
+            "recent_turns_used": recent_turns_used,
+            "history_filtered": history_available - recent_turns_used,
+            "conversation_closed": self._detect_conversation_closure(),
         }
 
     # ---------- Memory ----------
@@ -519,6 +536,22 @@ class Companion:
         return self._initiative.get_cooldowns() if self._initiative else {}
 
     # ---------- Internal ----------
+
+    def _detect_conversation_closure(self) -> bool:
+        """v2.8 Phase 5 (Conversation Closure) — reuse `Conversation.
+        get_last_user_message()` (v2.8, murni baca `_history`, TIDAK ADA
+        state baru) + `ai/conversation_signals.py::detect_closure()`
+        (pattern matching murni, TIDAK ADA LLM kedua). Dipanggil dari KEDUA
+        titik (`chat()` maupun `check_autonomous_opportunity()`) — hasilnya
+        SELALU sama untuk kedua jalur karena keduanya membaca pesan user
+        TERAKHIR yang sama dari `Conversation` yang sama (Companion satu-
+        satunya orchestrator, Conversation satu-satunya source of truth)."""
+        try:
+            last_message = self._conversation.get_last_user_message()
+            return detect_closure(last_message or "")
+        except Exception as e:
+            logger.warning("Gagal deteksi conversation closure: {}", e)
+            return False
 
     def _count_relevant_memories_for_vision(self, vision_context: Optional[VisionContext]) -> int:
         """v2.7 Phase 5+6 — Vision (application/summary) dipakai sebagai
