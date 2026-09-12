@@ -306,6 +306,10 @@ class DeveloperService:
             f"- Recent Turns Used: {cd['recent_turns_used'] if cd and cd.get('recent_turns_used') is not None else 'unknown'}",
             f"- History Filtered: {cd['history_filtered'] if cd and cd.get('history_filtered') is not None else 'unknown'}",
             f"- Conversation Closure: {'Yes' if cd and cd.get('conversation_closed') else 'No'}",
+            f"- History Characters: {cd['history_characters'] if cd and cd.get('history_characters') is not None else 'unknown'}",
+            f"- Estimated Context Size: ~{cd['estimated_context_tokens']} tokens ({cd['estimated_total_characters']} chars, KASAR — bukan tokenizer sungguhan)" if cd and cd.get('estimated_total_characters') is not None else "- Estimated Context Size: unknown",
+            f"- Context Assembly Latency: {cd['context_assembly_latency_ms']:.1f} ms (avg)" if cd and cd.get('context_assembly_latency_ms') is not None else "- Context Assembly Latency: belum ada data (belum pernah chat sejak app dibuka)",
+            f"- Provider Generation Latency: {cd['llm_latency_ms']:.1f} ms (avg)" if cd and cd.get('llm_latency_ms') is not None else "- Provider Generation Latency: belum ada data",
         ]
 
         for title, obj in [

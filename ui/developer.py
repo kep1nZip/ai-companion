@@ -353,18 +353,22 @@ class DeveloperDashboard(QDialog):
         self._set_card(self._providers_card, "\n".join(lines))
 
     def _render_context(self, snapshot: DeveloperSnapshot) -> None:
-        """v2.6 Phase 10 + v2.8 Phase 20: card read-only — murni menampilkan
-        `context_debug` yang sudah dikumpulkan `DeveloperService`, TIDAK
-        memanggil Companion/ContextBuilder langsung dari sini (Dashboard
-        tetap read-only, §5 spec v2.6). Field "Current Topic"/"Follow-up
-        Detected"/"Topic Shift" SENGAJA TIDAK ada di sini — v2.8 Phase 0
-        Audit §9 membuktikan itu butuh classifier sungguhan untuk diisi
-        jujur (bukan nilai yang dikarang)."""
+        """v2.6 Phase 10 + v2.8 Phase 20 + v2.9 Phase 7: card read-only —
+        murni menampilkan `context_debug` yang sudah dikumpulkan
+        `DeveloperService`, TIDAK memanggil Companion/ContextBuilder
+        langsung dari sini (Dashboard tetap read-only, §5 spec v2.6). Field
+        "Current Topic"/"Follow-up Detected"/"Topic Shift" SENGAJA TIDAK
+        ada di sini — v2.8 Phase 0 Audit §9 membuktikan itu butuh classifier
+        sungguhan untuk diisi jujur (bukan nilai yang dikarang)."""
         cd = snapshot.context_debug
         if cd is None:
             self._set_card(self._context_card, "Not available")
             return
         cap = "Unbounded (default)" if cd.get("history_cap") is None else str(cd["history_cap"])
+        est_tokens = cd.get("estimated_context_tokens")
+        est_chars = cd.get("estimated_total_characters")
+        assembly_ms = cd.get("context_assembly_latency_ms")
+        llm_ms = cd.get("llm_latency_ms")
         lines = [
             f"History Messages: {cd.get('history_message_count', 'unknown')} (cap: {cap})",
             f"Vision: {'Fresh' if cd.get('vision_fresh') else 'Not available'}",
@@ -372,6 +376,10 @@ class DeveloperDashboard(QDialog):
             f"Recent Turns Used: {cd.get('recent_turns_used', 'unknown')}",
             f"History Filtered: {cd.get('history_filtered', 'unknown')}",
             f"Conversation Closure: {'Yes' if cd.get('conversation_closed') else 'No'}",
+            f"History Characters: {cd.get('history_characters', 'unknown')}",
+            f"Estimated Context Size: ~{est_tokens} tokens (~{est_chars} chars, kasar)" if est_tokens is not None else "Estimated Context Size: unknown",
+            f"Context Assembly Latency: {assembly_ms:.1f} ms (avg)" if assembly_ms is not None else "Context Assembly Latency: belum ada data",
+            f"Provider Generation Latency: {llm_ms:.1f} ms (avg)" if llm_ms is not None else "Provider Generation Latency: belum ada data",
         ]
         self._set_card(self._context_card, "\n".join(lines))
 

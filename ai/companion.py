@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Optional
 
 from google.genai import types
@@ -388,7 +389,33 @@ class Companion:
         `vision_fresh` True kalau `current_vision_context()` mengembalikan
         sesuatu (Vision.get_context() SUDAH memfilter stale sejak v1.5.2,
         lihat v2.6 Phase 0 Audit §3 — jadi non-None DI SINI selalu berarti
-        fresh, tidak pernah stale)."""
+        fresh, tidak pernah stale).
+
+        v2.9 Phase 0/1/7 (Context Scaling Audit/Observability) — field baru:
+        - `history_characters`: jumlah karakter history yang BENAR-BENAR
+          akan terkirim (sudah kena cap kalau aktif) — dihitung langsung
+          dari `Conversation._history`, bukan estimasi.
+        - `ephemeral_context_characters`: panjang teks Ephemeral Context
+          SAAT INI (dihitung dengan memanggil `ContextBuilder.build()` yang
+          sudah ada — fungsi murni/deterministik, TIDAK ada efek samping,
+          TIDAK memicu Vision capture baru apa pun, aman dipanggil kapan
+          saja). Memory Context TIDAK diikutkan di sini — ukurannya
+          tergantung query pesan Teacher yang belum tentu ada saat snapshot
+          diminta (Dashboard bisa dibuka kapan saja, bukan cuma pas ada
+          chat aktif) — dicatat eksplisit sebagai keterbatasan, BUKAN
+          disamarkan sebagai angka lengkap (§7 spec v2.9: "hanya data yang
+          benar-benar tersedia").
+        - `estimated_context_tokens`: estimasi KASAR (karakter / 4 — rule of
+          thumb umum, BUKAN tokenizer sungguhan — spec v2.9 §6 eksplisit
+          melarang menambah dependency tokenizer baru cuma untuk ini).
+          Diberi label "estimated" di semua tempat ditampilkan, tidak pernah
+          diklaim sebagai angka pasti.
+        - `context_assembly_latency_ms` / `llm_latency_ms`: reuse
+          `PerformanceTracker` yang SUDAH ADA sejak v2.2 (`self._performance`,
+          key "context_assembly" baru ditambahkan v2.9 di `_build_contents()`/
+          `_build_autonomous_contents()`, key "gemini" SUDAH ADA sejak awal
+          untuk durasi panggilan provider apa pun yang aktif — TIDAK pernah
+          benar-benar Gemini-only, cuma nama key historis)."""
         vision_context = self._vision.get_context() if self._vision else None
         try:
             active_memory_count = len(self._memory_manager.load_memories(limit=10_000))
@@ -404,7 +431,26 @@ class Companion:
         # diisi jujur, yang berarti STOP CONDITION #1 spec ("Topic detection
         # requires another LLM") — bukan keputusan yang saya ambil sepihak.
         history_available = self._conversation.message_count()
-        recent_turns_used = len(self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES))
+        capped_history = self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES)
+        recent_turns_used = len(capped_history)
+        history_characters = sum(
+            len(part.text or "") for content in capped_history for part in (content.parts or [])
+        )
+
+        try:
+            ephemeral_context_characters = len(
+                self._context_builder.build(self.current_behavior_state(), vision_context=vision_context)
+            )
+        except Exception as e:
+            logger.warning("Gagal hitung ukuran ephemeral context untuk debug snapshot: {}", e)
+            ephemeral_context_characters = None
+
+        estimated_total_characters = history_characters + (ephemeral_context_characters or 0)
+
+        perf_snapshot = self._performance.snapshot() if self._performance is not None else {}
+        context_assembly_metric = perf_snapshot.get("context_assembly")
+        llm_metric = perf_snapshot.get("gemini")
+
         return {
             "history_message_count": history_available,
             "history_cap": CONVERSATION_HISTORY_MAX_MESSAGES,
@@ -413,6 +459,12 @@ class Companion:
             "recent_turns_used": recent_turns_used,
             "history_filtered": history_available - recent_turns_used,
             "conversation_closed": self._detect_conversation_closure(),
+            "history_characters": history_characters,
+            "ephemeral_context_characters": ephemeral_context_characters,
+            "estimated_total_characters": estimated_total_characters,
+            "estimated_context_tokens": round(estimated_total_characters / 4),
+            "context_assembly_latency_ms": context_assembly_metric.avg_ms if context_assembly_metric else None,
+            "llm_latency_ms": llm_metric.avg_ms if llm_metric else None,
         }
 
     # ---------- Memory ----------
@@ -604,7 +656,16 @@ class Companion:
 
         v2.6 Phase 6: `CONVERSATION_HISTORY_MAX_MESSAGES` (default None =
         unbounded, TIDAK BERUBAH dari sebelumnya kecuali Teacher eksplisit
-        set di .env) — lihat config/settings.py & Conversation.get_history()."""
+        set di .env) — lihat config/settings.py & Conversation.get_history().
+
+        v2.9 Phase 0/7 (Context Scaling Audit/Observability): seluruh isi
+        method ini (mulai `get_history()` sampai `return`) sekarang dibungkus
+        timer `context_assembly` — SEBELUMNYA cuma sub-bagian `memory_query`
+        yang punya timer sendiri, "biaya assembly total" (ephemeral+memory+
+        history digabung jadi list `contents`) belum pernah terukur sebagai
+        satu angka. Nested dengan `memory_query` (memory_query tetap muncul
+        terpisah di Dashboard) — ini pola profiling yang wajar, bukan bug."""
+        _assembly_start = time.perf_counter()
         history = self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES)
         contents: list[types.Content] = []
 
@@ -640,6 +701,8 @@ class Companion:
 
         contents.extend(history)
         logger.info("Ephemeral Context Injected")
+        if self._performance is not None:
+            self._performance.record("context_assembly", (time.perf_counter() - _assembly_start) * 1000)
         return contents
 
     def _select_relevant_memories(self, user_input: str) -> list[Memory]:
@@ -768,7 +831,13 @@ class Companion:
         adanya, TIDAK diduplikasi) — ini murni keputusan URUTAN di level
         Companion, orchestrator tetap satu.
 
-        v2.6 Phase 6: cap sama persis seperti _build_contents()."""
+        v2.6 Phase 6: cap sama persis seperti _build_contents().
+
+        v2.9 Phase 0/7: timer `context_assembly` sama persis pola
+        `_build_contents()` — DUA early-return (`[]` kalau ephemeral gagal
+        dibangun) TETAP direkam durasinya (percobaan yang gagal pun tetap
+        "biaya" nyata yang layak diukur, bukan disembunyikan dari metrik)."""
+        _assembly_start = time.perf_counter()
         history = self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES)
         contents: list[types.Content] = list(history)
 
@@ -781,6 +850,8 @@ class Companion:
             )
         except Exception as e:
             logger.warning("Gagal membangun autonomous context, batal bicara: {}", e)
+            if self._performance is not None:
+                self._performance.record("context_assembly", (time.perf_counter() - _assembly_start) * 1000)
             return []
 
         try:
@@ -812,6 +883,8 @@ class Companion:
             )
         )
         logger.info("Context Generated (Autonomous)")
+        if self._performance is not None:
+            self._performance.record("context_assembly", (time.perf_counter() - _assembly_start) * 1000)
         return contents
 
     def _schedule_memory_extraction(self, user_input: str) -> None:
