@@ -169,6 +169,10 @@ class DeveloperDashboard(QDialog):
         # terasa aneh/lambat (mis. history sudah sangat panjang, atau
         # Vision ternyata sudah stale padahal Teacher kira masih fresh).
         self._context_card = self._add_section("Context")
+        # v3.0 Phase 10 (Item F) — card baru, ditaruh setelah Context karena
+        # sama-sama "signal state" yang Teacher mungkin cek berbarengan saat
+        # menilai apakah Arona terasa adaptif.
+        self._personalization_card = self._add_section("Personalization")
         self._behavior_card = self._add_section("Behavior")
         self._vision_card = self._add_section("Vision")
         self._routine_card = self._add_section("Routine")
@@ -307,6 +311,7 @@ class DeveloperDashboard(QDialog):
         self._render_health(snapshot)
         self._render_providers(snapshot)
         self._render_context(snapshot)
+        self._render_personalization(snapshot)
         self._render_behavior(snapshot)
         self._render_vision(snapshot)
         self._render_routine(snapshot)
@@ -382,6 +387,30 @@ class DeveloperDashboard(QDialog):
             f"Provider Generation Latency: {llm_ms:.1f} ms (avg)" if llm_ms is not None else "Provider Generation Latency: belum ada data",
         ]
         self._set_card(self._context_card, "\n".join(lines))
+
+    def _render_personalization(self, snapshot: DeveloperSnapshot) -> None:
+        """v3.0 Phase 10 (Item F): card read-only — murni menampilkan
+        `personalization_debug` yang sudah dikumpulkan `DeveloperService`.
+        SEMUA field di sini adalah "sinyal yang TERSEDIA", BUKAN "sinyal
+        yang diterapkan LLM" — v3.0 Phase 0 Audit §7 menyimpulkan klaim
+        "applied" berisiko fabricated telemetry, jadi TIDAK ADA field
+        seperti itu di sini sama sekali."""
+        pd = snapshot.personalization_debug
+        if pd is None:
+            self._set_card(self._personalization_card, "Not available")
+            return
+        style = pd.get("response_style_signal") or "None detected"
+        lines = [
+            f"Relationship: Trust {pd.get('relationship_trust')} / Comfort {pd.get('relationship_comfort')} / "
+            f"Affection {pd.get('relationship_affection')} / Respect {pd.get('relationship_respect')} / "
+            f"Familiarity {pd.get('relationship_familiarity')} (avg {pd.get('relationship_average')})",
+            f"Emotion: {pd.get('emotion_current')}",
+            f"Energy: {pd.get('energy_current')}",
+            f"Relevant Preference Count: {pd.get('relevant_preference_count')}",
+            f"Response Style Signal: {style}",
+            f"Personalization Signal Available: {'Yes' if pd.get('personalization_signal_available') else 'No'}",
+        ]
+        self._set_card(self._personalization_card, "\n".join(lines))
 
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:
         b = snapshot.behavior

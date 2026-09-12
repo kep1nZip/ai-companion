@@ -19,7 +19,7 @@ from ai.memory_extractor import (
     RELATION_UPDATE,
     RELATION_SUPERSEDES,
 )
-from ai.conversation_signals import detect_closure
+from ai.conversation_signals import detect_closure, detect_style_preference
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder
 from database.memory_manager import MemoryManager, Memory
@@ -467,6 +467,53 @@ class Companion:
             "llm_latency_ms": llm_metric.avg_ms if llm_metric else None,
         }
 
+    def get_personalization_debug_snapshot(self) -> dict:
+        """v3.0 Phase 10 (Developer Observability, Item F) — READ-ONLY, murni
+        untuk Developer Dashboard, TIDAK memicu apa pun (nol capture Vision
+        baru, nol query provider). Semua field di sini adalah SINYAL YANG
+        TERSEDIA untuk personalisasi — BUKAN klaim bahwa LLM benar-benar
+        memakainya di respons terakhir (itu tidak bisa diketahui pasti,
+        v3.0 Phase 0 Audit §7: menampilkannya sebagai "applied" akan jadi
+        fabricated telemetry — Teacher eksplisit menolak field itu).
+
+        `relationship_*`: reuse `BehaviorState.relationship` yang SUDAH ADA
+        sejak awal (sama seperti yang dikirim ke prompt tiap giliran lewat
+        `ContextBuilder._format_relationship()`).
+        `emotion_current`/`energy_current`: reuse `BehaviorState.emotion`/
+        `internal` yang SUDAH ADA.
+        `relevant_preference_count`: reuse `_count_relevant_memories_for_vision()`
+        (v2.7/v3.0) — SAMA PERSIS dengan sinyal yang dipakai Initiative.
+        `response_style_signal`: reuse `detect_style_preference()` (v3.0,
+        `ai/conversation_signals.py`) terhadap pesan Teacher TERAKHIR — MURNI
+        observasional, TIDAK mengontrol apa pun (lihat docstring fungsi itu).
+        `personalization_signal_available`: True kalau ADA SALAH SATU sinyal
+        di atas yang non-default (relationship lumayan dekat, ada memory
+        relevan, atau style signal terdeteksi) — INI BUKAN "applied", cuma
+        "tersedia untuk dipertimbangkan model", sesuai keputusan Teacher."""
+        behavior_state = self.current_behavior_state()
+        vision_context = self._vision.get_context() if self._vision else None
+        r = behavior_state.relationship
+        relationship_average = round((r.trust.current + r.comfort.current + r.affection.current) / 3, 1)
+        relevant_preference_count = self._count_relevant_memories_for_vision(vision_context)
+        last_message = self._conversation.get_last_user_message() or ""
+        style_signal = detect_style_preference(last_message)
+
+        return {
+            "relationship_trust": r.trust.current,
+            "relationship_comfort": r.comfort.current,
+            "relationship_affection": r.affection.current,
+            "relationship_respect": r.respect.current,
+            "relationship_familiarity": r.familiarity.current,
+            "relationship_average": relationship_average,
+            "emotion_current": behavior_state.emotion.current.value,
+            "energy_current": behavior_state.internal.energy.value,
+            "relevant_preference_count": relevant_preference_count,
+            "response_style_signal": style_signal,
+            "personalization_signal_available": (
+                relevant_preference_count > 0 or style_signal is not None or relationship_average >= 60
+            ),
+        }
+
     # ---------- Memory ----------
 
     def list_memories(self, limit: int = 50) -> list[Memory]:
@@ -605,6 +652,22 @@ class Companion:
             logger.warning("Gagal deteksi conversation closure: {}", e)
             return False
 
+    def _vision_query_text(self, vision_context: Optional[VisionContext]) -> str:
+        """v3.0 Phase 7 (Autonomous Personalization) — diekstrak dari
+        `_count_relevant_memories_for_vision()` (v2.7) supaya query yang
+        SAMA PERSIS bisa dipakai di DUA tempat: (1) Initiative scoring
+        (lewat `_count_relevant_memories_for_vision` di bawah) dan (2) isi
+        konten respons otonom (lewat `_relevant_memories_for_vision` di
+        bawah). SEBELUM v3.0, keduanya BERBEDA — Initiative memutuskan
+        "boleh bicara" berdasarkan Vision+Memory, tapi respons otonom yang
+        BENAR-BENAR keluar memakai memory recency biasa yang TIDAK ADA
+        hubungannya dengan Vision (v3.0 Phase 0 Audit §5, temuan
+        ketidaksinkronan nyata). Fungsi ini SATU-SATUNYA tempat query itu
+        dibangun, supaya keduanya TIDAK PERNAH lagi berbeda."""
+        if vision_context is None:
+            return ""
+        return f"{vision_context.application or ''} {vision_context.summary or ''}".strip()
+
     def _count_relevant_memories_for_vision(self, vision_context: Optional[VisionContext]) -> int:
         """v2.7 Phase 5+6 — Vision (application/summary) dipakai sebagai
         QUERY ke retrieval Memory yang SUDAH ADA (`_select_relevant_
@@ -618,9 +681,7 @@ class Companion:
         stale, keduanya sudah di-gate `Vision.get_context()` sejak v1.5.2/
         v2.6), return 0 — tidak ada query yang masuk akal, rule ini
         simply tidak berkontribusi (bukan dipaksakan)."""
-        if vision_context is None:
-            return 0
-        query_text = f"{vision_context.application or ''} {vision_context.summary or ''}".strip()
+        query_text = self._vision_query_text(vision_context)
         if not query_text:
             return 0
         try:
@@ -628,6 +689,26 @@ class Companion:
         except Exception as e:
             logger.warning("Gagal hitung relevant_memory_count untuk Initiative: {}", e)
             return 0
+
+    def _relevant_memories_for_autonomous(self, vision_context: Optional[VisionContext]) -> list[Memory]:
+        """v3.0 Phase 7 — dipakai `_build_autonomous_contents()` untuk isi
+        KONTEN respons otonom, reuse QUERY yang SAMA PERSIS (`_vision_query_
+        text()`) dengan yang dipakai Initiative untuk SCORING di atas.
+
+        Kalau Vision tidak aktif/kosong, `_select_relevant_memories("")`
+        TETAP dipanggil (BUKAN dilewati) — `_select_relevant_memories`
+        SUDAH punya fallback ke recency (marker-filtered, v2.6) untuk kasus
+        keyword kosong, jadi perilakunya PERSIS sama dengan
+        `load_memories()` recency lama, cuma sekarang lewat jalur yang
+        sudah difilter marker — bonus fix kecil dari penyatuan ini (v3.0
+        Phase 0 Audit §5: jalur lama `load_memories()` langsung di sini
+        TIDAK PERNAH difilter marker, beda dari jalur chat context)."""
+        query_text = self._vision_query_text(vision_context)
+        try:
+            return self._select_relevant_memories(query_text)
+        except Exception as e:
+            logger.warning("Gagal ambil memory relevan utk autonomous content: {}", e)
+            return []
 
     def _update_behavior(self, user_input: str) -> BehaviorState:
         try:
@@ -855,7 +936,18 @@ class Companion:
             return []
 
         try:
-            memories = self._timed("memory_query", lambda: self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT))
+            # v3.0 Phase 7 (Autonomous Personalization) — SEBELUMNYA baris ini
+            # `self._memory_manager.load_memories(limit=...)` LANGSUNG (recency
+            # biasa, TIDAK ada hubungan dengan Vision, dan TIDAK melewati
+            # filter marker __ARONA_... sama sekali — v3.0 Phase 0 Audit §5:
+            # ketidaksinkronan nyata antara alasan Initiative "boleh bicara"
+            # [lihat _count_relevant_memories_for_vision di atas, query SAMA]
+            # dan isi konten yang benar-benar diucapkan. Sekarang KEDUANYA
+            # pakai `_vision_query_text()` yang SAMA PERSIS — kalau Initiative
+            # bicara "karena lihat Game X", isi respons SEKARANG benar-benar
+            # membawa memory soal Game X juga, bukan memory acak yang baru
+            # diubah. Bonus: otomatis ikut ter-filter marker (sebelumnya tidak).
+            memories = self._timed("memory_query", lambda: self._relevant_memories_for_autonomous(vision_context))
             memory_text = _format_memories(memories)
         except Exception as e:
             logger.warning("Gagal memuat memori (autonomous), lanjut tanpa memori: {}", e)

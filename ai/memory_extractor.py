@@ -52,6 +52,17 @@ baik tidak menyimpan apa pun daripada menyimpan fakta yang salah.
 
 Kategori yang valid HANYA: preference, relationship, identity, project, schedule, general.
 
+v3.0 — Perhatikan bedanya preferensi yang STABIL dengan minat/aktivitas yang
+SEDANG BERLANGSUNG saja: "Aku suka kopi americano" atau "Aku selalu suka main
+game strategi" adalah preferensi stabil (kategori "preference", cenderung
+berlaku lama). Sedangkan "Aku lagi pengen belajar Rust" atau "Sekarang aku
+lagi fokus belajar gitar" adalah minat/aktivitas SAAT INI yang bisa berubah
+kapan saja — lebih tepat masuk kategori "project" atau "general", BUKAN
+"preference". Kata kunci seperti "lagi", "sekarang", "belakangan ini", "buat
+sementara" menandakan sesuatu yang sedang berlangsung, bukan preferensi
+permanen — tetap layak diingat, tapi jangan disamakan kategorinya dengan
+preferensi yang dinyatakan sebagai kebiasaan/kesukaan tetap.
+
 Sebelum pesan Teacher, kamu KADANG akan diberi daftar "memori terkait yang sudah
 ada" (masing-masing dengan id angka). Kalau daftar itu ADA, tentukan hubungan
 ("relation") setiap fakta baru yang kamu ekstrak terhadap memori terkait tersebut:

@@ -60,6 +60,10 @@ class DeveloperSnapshot:
     # versi Companion lama/test yang belum diupdate; None ditangani sama
     # seperti field observability lain di file ini (tampil "unknown"/"N/A").
     context_debug: Optional[dict]
+    # v3.0 Phase 10 (Item F) — pola IDENTIK context_debug (Optional[dict]
+    # generik, nol perubahan skema besar diperlukan untuk field baru di
+    # dalamnya nanti).
+    personalization_debug: Optional[dict]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -209,6 +213,16 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil context debug snapshot: {}", e)
             return None
 
+    def get_personalization_debug(self) -> Optional[dict]:
+        """v3.0 Phase 10 (Item F): read-only passthrough ke
+        Companion.get_personalization_debug_snapshot(). Pola try/except
+        IDENTIK get_context_debug() di atas."""
+        try:
+            return self._companion.get_personalization_debug_snapshot()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil personalization debug snapshot: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -260,6 +274,7 @@ class DeveloperService:
             tts_provider_name=self.get_tts_provider_name(),
             tts_model_name=self.get_tts_model_name(),
             context_debug=self.get_context_debug(),
+            personalization_debug=self.get_personalization_debug(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -310,6 +325,21 @@ class DeveloperService:
             f"- Estimated Context Size: ~{cd['estimated_context_tokens']} tokens ({cd['estimated_total_characters']} chars, KASAR — bukan tokenizer sungguhan)" if cd and cd.get('estimated_total_characters') is not None else "- Estimated Context Size: unknown",
             f"- Context Assembly Latency: {cd['context_assembly_latency_ms']:.1f} ms (avg)" if cd and cd.get('context_assembly_latency_ms') is not None else "- Context Assembly Latency: belum ada data (belum pernah chat sejak app dibuka)",
             f"- Provider Generation Latency: {cd['llm_latency_ms']:.1f} ms (avg)" if cd and cd.get('llm_latency_ms') is not None else "- Provider Generation Latency: belum ada data",
+        ]
+
+        # v3.0 Phase 10 (Item F) — SEMUA field di bawah "sinyal yang
+        # TERSEDIA", BUKAN "diterapkan" (§7 Audit v3.0: klaim "applied"
+        # berisiko fabricated telemetry karena kita tidak pernah tahu pasti
+        # LLM benar-benar memakainya).
+        pd = s.personalization_debug
+        lines += [
+            "", "## Personalization",
+            f"- Relationship: Trust {pd['relationship_trust']} / Comfort {pd['relationship_comfort']} / Affection {pd['relationship_affection']} / Respect {pd['relationship_respect']} / Familiarity {pd['relationship_familiarity']} (avg {pd['relationship_average']})" if pd else "- Relationship: unknown",
+            f"- Emotion: {pd['emotion_current']}" if pd else "- Emotion: unknown",
+            f"- Energy: {pd['energy_current']}" if pd else "- Energy: unknown",
+            f"- Relevant Preference Count: {pd['relevant_preference_count']}" if pd else "- Relevant Preference Count: unknown",
+            f"- Response Style Signal: {pd['response_style_signal'] or 'None detected'}" if pd else "- Response Style Signal: unknown",
+            f"- Personalization Signal Available: {'Yes' if pd and pd.get('personalization_signal_available') else 'No'}",
         ]
 
         for title, obj in [
