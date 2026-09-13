@@ -339,6 +339,7 @@ class DeveloperService:
             f"- Energy: {pd['energy_current']}" if pd else "- Energy: unknown",
             f"- Relevant Preference Count: {pd['relevant_preference_count']}" if pd else "- Relevant Preference Count: unknown",
             f"- Response Style Signal: {pd['response_style_signal'] or 'None detected'}" if pd else "- Response Style Signal: unknown",
+            f"- Continuity Signal: {pd['continuity_state']}" if pd and pd.get('continuity_state') is not None else "- Continuity Signal: unknown",
             f"- Personalization Signal Available: {'Yes' if pd and pd.get('personalization_signal_available') else 'No'}",
         ]
 

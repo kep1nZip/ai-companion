@@ -21,7 +21,7 @@ from ai.memory_extractor import (
 )
 from ai.conversation_signals import detect_closure, detect_style_preference
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
-from ai.context_builder import ContextBuilder
+from ai.context_builder import ContextBuilder, categorize_continuity
 from database.memory_manager import MemoryManager, Memory
 from behavior.behavior_engine import BehaviorEngine
 from behavior.behavior_state import BehaviorState, DEFAULT_BEHAVIOR_STATE
@@ -489,7 +489,13 @@ class Companion:
         `personalization_signal_available`: True kalau ADA SALAH SATU sinyal
         di atas yang non-default (relationship lumayan dekat, ada memory
         relevan, atau style signal terdeteksi) — INI BUKAN "applied", cuma
-        "tersedia untuk dipertimbangkan model", sesuai keputusan Teacher."""
+        "tersedia untuk dipertimbangkan model", sesuai keputusan Teacher.
+
+        v3.1 Phase 7: `continuity_state` — reuse `categorize_continuity()`
+        (`ai/context_builder.py`, v3.1 Phase 1+2) terhadap `idle_seconds`
+        yang SAMA PERSIS dipakai untuk menyusun teks "Conversation Status"
+        yang dikirim ke model — SATU fungsi kategorisasi, dua pemakai
+        (prompt & Dashboard), TIDAK PERNAH bisa tidak sinkron."""
         behavior_state = self.current_behavior_state()
         vision_context = self._vision.get_context() if self._vision else None
         r = behavior_state.relationship
@@ -497,6 +503,7 @@ class Companion:
         relevant_preference_count = self._count_relevant_memories_for_vision(vision_context)
         last_message = self._conversation.get_last_user_message() or ""
         style_signal = detect_style_preference(last_message)
+        continuity_state = categorize_continuity(behavior_state.internal.elapsed_seconds())
 
         return {
             "relationship_trust": r.trust.current,
@@ -509,6 +516,7 @@ class Companion:
             "energy_current": behavior_state.internal.energy.value,
             "relevant_preference_count": relevant_preference_count,
             "response_style_signal": style_signal,
+            "continuity_state": continuity_state,
             "personalization_signal_available": (
                 relevant_preference_count > 0 or style_signal is not None or relationship_average >= 60
             ),

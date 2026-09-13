@@ -1,7 +1,27 @@
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
+# v3.1.1 — HOTFIX (dilaporkan Teacher: auto-restart Phase 6 tidak benar-benar
+# mengaktifkan provider baru sampai Teacher exit manual & jalankan ulang).
+#
+# Root cause DIKONFIRMASI EMPIRIS (reproduksi langsung sebelum fix ini):
+# `os.execv()` (dipakai restart handler, ui/window.py) MEWARISI `os.environ`
+# proses lama APA ADANYA — execv cuma mengganti image proses (kode Python/
+# modul), BUKAN environment variables. Kalau proses lama sudah sempat
+# `load_dotenv()` (mis. AI_PROVIDER=gemini ter-set ke os.environ), lalu
+# Teacher ganti Settings & .env ditulis ulang jadi AI_PROVIDER=local, proses
+# BARU hasil execv() TETAP mewarisi AI_PROVIDER=gemini di os.environ-nya.
+# `load_dotenv()` TANPA `override=True` TIDAK PERNAH menimpa key yang SUDAH
+# ADA di os.environ (perilaku default python-dotenv) — jadi nilai lama
+# ("gemini") menang, .env yang baru ("local") diabaikan.
+#
+# Fix: `override=True` — file `.env` SELALU jadi sumber kebenaran final,
+# TIDAK PERNAH dikalahkan oleh env var yang kebetulan sudah ter-set di
+# proses (baik dari restart, shell environment, atau apa pun). AMAN untuk
+# kasus normal (`python main_gui.py` dari shell bersih) — tidak ada beda
+# kalau belum pernah ada nilai ter-set sebelumnya, cuma krusial persis
+# untuk kasus restart yang mewarisi environment.
+load_dotenv(override=True)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 

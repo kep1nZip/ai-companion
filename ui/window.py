@@ -1,4 +1,6 @@
 from __future__ import annotations
+import os
+import sys
 from pathlib import Path  # <-- Tambahan Import
 
 from PySide6.QtCore import Qt, QTimer
@@ -169,6 +171,8 @@ class MainWindow(QMainWindow):
         self._settings_service = SettingsService()
         self._settings_page = SettingsPage(self._settings_service)
         self._settings_page.open_developer_dashboard_requested.connect(self._handle_open_developer_dashboard)
+        # v3.1 Phase 6 — pola IDENTIK baris di atas.
+        self._settings_page.restart_requested.connect(self._handle_restart_requested)
         # v1.5: VisionPage reuses self._companion directly — Vision.capture()/
         # analyze() already live inside Companion via capture_vision()/
         # current_vision_context(), no second Vision/ScreenCapture/ImageAnalyzer.
@@ -448,7 +452,15 @@ class MainWindow(QMainWindow):
 
     # ---------- Shutdown ----------
 
-    def closeEvent(self, event) -> None:
+    def _perform_cleanup(self) -> None:
+        """v3.1 Phase 6 — Diekstrak dari `closeEvent()` (SEBELUM v3.1, urutan
+        ini HANYA ada di `closeEvent()`) supaya bisa DI-REUSE TOTAL oleh
+        restart handler (`_handle_restart_requested`) di bawah — SATU urutan
+        cleanup, DUA pemanggil (tutup normal & restart), TIDAK diduplikasi
+        sama sekali (instruksi eksplisit Teacher: "Urutan cleanup existing
+        harus direuse, bukan diduplikasi"). Isi method ini SAMA PERSIS
+        dengan urutan `closeEvent()` sebelum v3.1 — nol perubahan urutan/
+        logic, murni dipindah ke method sendiri."""
         self._autonomous_timer.stop()  # <-- v1.8: hentikan timer pengecekan otonom
         self._avatar_worker.stop_avatar()  # <-- Menghentikan worker avatar sebelum keluar
         # v1.5.2 spec §34/§48: scheduler Auto Vision (kalau sedang jalan)
@@ -465,5 +477,60 @@ class MainWindow(QMainWindow):
         # terpanggil hanya karena parent window ditutup.
         if self._developer_dashboard is not None:
             self._developer_dashboard.close()
+
+    def closeEvent(self, event) -> None:
+        self._perform_cleanup()
         logger.info("Application closed.")
+
+    def _handle_restart_requested(self) -> None:
+        """v3.1 Phase 6 (Language Model Change Auto-Restart).
+
+        Dipanggil HANYA saat `SettingsPage.restart_requested` di-emit —
+        yaitu HANYA ketika Apply benar-benar menyimpan perubahan provider/
+        model (AI/Memory/Vision Provider), BUKAN untuk setiap perubahan
+        Settings (mis. ganti API key saja TIDAK memicu ini — dipertahankan
+        sesuai kode lama yang juga tidak pernah menganggap API key butuh
+        restart). Lihat `ui/settings.py::_handle_apply` untuk titik emit.
+
+        Urutan (persis kontrak spec v3.1 Phase 6):
+        1. Beri tahu Teacher secara eksplisit (BUKAN silent, BUKAN terasa
+           seperti crash) — modal, supaya Teacher sadar ini disengaja
+           sebelum window tiba-tiba hilang.
+        2. Reuse `_perform_cleanup()` — SAMA PERSIS urutan yang dipakai
+           `closeEvent()`, TIDAK ditulis ulang. Konfigurasi (.env) SUDAH
+           disimpan oleh `SettingsService` SEBELUM Signal ini di-emit
+           (lihat `ui/settings.py`), jadi urutan "simpan dulu baru cleanup"
+           dari spec sudah otomatis terpenuhi lewat urutan pemanggilan.
+        3. `os.execv(sys.executable, [sys.executable] + sys.argv)` — pola
+           restart-diri standar Python: MENGGANTI process image saat ini
+           (bukan spawn child process), dijamin level-OS TIDAK ADA proses
+           ganda/menggantung, TIDAK PERNAH butuh hardcoded path (selalu
+           pakai interpreter & argumen yang SEDANG menjalankan aplikasi
+           ini, di mesin manapun). Restart HANYA terpicu oleh aksi Teacher
+           yang eksplisit (Apply) — tidak ada logic otomatis berulang,
+           jadi tidak ada risiko restart loop.
+
+        Kalau langkah 2/3 gagal (exception apa pun), Teacher diberi tahu
+        jelas lewat QMessageBox kedua — TIDAK PERNAH silent fail sesuai
+        larangan eksplisit spec v3.1 Phase 6."""
+        try:
+            QMessageBox.information(
+                self,
+                "Restarting Arona",
+                "Language model updated.\nArona will restart to apply the new model.",
+            )
+            logger.info("Restart otomatis dipicu oleh perubahan provider/model di Settings.")
+            self._perform_cleanup()
+            logger.info("Cleanup selesai, menjalankan ulang aplikasi via os.execv().")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            logger.error("Restart otomatis GAGAL: {}", e)
+            QMessageBox.critical(
+                self,
+                "Restart Failed",
+                f"Arona gagal restart otomatis setelah perubahan model.\n\n"
+                f"Error: {e}\n\n"
+                f"Silakan tutup dan jalankan ulang Arona secara manual "
+                f"supaya model baru aktif.",
+            )
         event.accept()

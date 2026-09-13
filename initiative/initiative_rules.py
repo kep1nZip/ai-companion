@@ -275,6 +275,44 @@ class ConversationClosureRule(DecisionRule):
         return None
 
 
+class ReturningAfterGapRule(DecisionRule):
+    """v3.1 Phase 3 (Adaptive Initiative Quality).
+
+    Reuse TOTAL `ctx.idle_seconds` yang SUDAH ADA di `DecisionContext`
+    (v2.7) — TIDAK ADA field baru ditambahkan, TIDAK ADA state/timer baru.
+    Fungsinya menutup "zona abu-abu" yang sebelumnya cuma ditangani flat
+    oleh `RecentInteractionPenaltyRule` (-20 utk SEMUA idle_seconds < 900,
+    baik itu 5 detik maupun 14 menit) — sekarang zona 60-900 detik (jeda
+    singkat) dapat kontra-bonus kecil, supaya Initiative sedikit lebih
+    nuanced: "baru saja balas 3 detik lalu" (masih -20 penuh) beda
+    keputusannya dari "Teacher baru kembali setelah 10 menit pergi" (-20 +
+    10 = -10 net, lebih longgar).
+
+    Batas 60/900 detik SAMA PERSIS dengan `ai/context_builder.py::
+    _SHORT_GAP_SECONDS`/`_LONG_GAP_SECONDS` (v3.1 Phase 1+2) — TIDAK
+    diimpor langsung (menghindari coupling baru lintas package ai/<->
+    initiative/) tapi angkanya SENGAJA disamakan persis supaya sinyal yang
+    dilihat model (Conversation Status) dan yang dipakai Initiative untuk
+    skor selalu menceritakan hal yang konsisten.
+
+    Weight = +10.0 — magnitude PALING KECIL yang sudah dipakai rule lain
+    (pola sama seperti `MemoryRelevanceRule`/`ConversationClosureRule`,
+    v2.7/v2.8) — konservatif untuk sinyal yang belum tervalidasi
+    pemakaian nyata."""
+
+    _SHORT_GAP_SECONDS = 60.0
+    _LONG_GAP_SECONDS = 900.0
+
+    def __init__(self, weight: float = 10.0):
+        super().__init__("returning_after_gap", weight)
+
+    def evaluate(self, ctx: DecisionContext) -> Optional[str]:
+        if self._SHORT_GAP_SECONDS <= ctx.idle_seconds < self._LONG_GAP_SECONDS:
+            minutes = int(ctx.idle_seconds // 60)
+            return f"Teacher baru kembali setelah jeda singkat (~{minutes} menit)"
+        return None
+
+
 DEFAULT_RULES: list[DecisionRule] = [
     IdleRule(),
     RecentInteractionPenaltyRule(),
@@ -286,6 +324,7 @@ DEFAULT_RULES: list[DecisionRule] = [
     RoutinePendingRule(),
     MemoryRelevanceRule(),
     ConversationClosureRule(),
+    ReturningAfterGapRule(),
 ]
 
 DEFAULT_THRESHOLD = 50.0

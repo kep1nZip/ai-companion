@@ -56,6 +56,13 @@ class SettingsPage(QWidget):
     self._developer_service) yang membuka dialog-nya."""
 
     open_developer_dashboard_requested = Signal()  # v1.7
+    # v3.1 Phase 6 — pola IDENTIK Signal di atas: SettingsPage TIDAK PERNAH
+    # memegang referensi Companion/Vision/AvatarManager/VoiceManager
+    # langsung, cuma MEMINTA MainWindow (pemilik semua manager itu) untuk
+    # melakukan restart. Di-emit HANYA saat Apply benar-benar menyimpan
+    # perubahan provider/model (lihat _handle_apply di bawah) — TIDAK
+    # PERNAH untuk perubahan API key saja.
+    restart_requested = Signal()
 
     def __init__(self, settings_service: SettingsService):
         super().__init__()
@@ -395,6 +402,12 @@ class SettingsPage(QWidget):
                 self._show_error(str(e))
                 return
 
+        # v3.1 Phase 6: flag lokal, TIDAK PERNAH diset True oleh blok
+        # `_api_key_dirty` di atas — ganti API key SENDIRIAN TIDAK memicu
+        # restart otomatis (dipertahankan sesuai perilaku lama: blok itu
+        # satu-satunya dari 4 yang tidak pernah log "restart dibutuhkan").
+        restart_needed = False
+
         if self._provider_dirty:
             try:
                 self._service.save_provider_settings(
@@ -405,6 +418,7 @@ class SettingsPage(QWidget):
                 self._show_error(str(e))
                 return
             logger.info("Settings GUI: AI provider diperbarui, restart dibutuhkan.")
+            restart_needed = True
 
         # v2.2: dipisah dari _provider_dirty (Language Provider) — pola sama
         # dengan blok api_key_dirty/provider_dirty di atas.
@@ -417,6 +431,7 @@ class SettingsPage(QWidget):
                 self._show_error(str(e))
                 return
             logger.info("Settings GUI: Memory Extraction provider diperbarui, restart dibutuhkan.")
+            restart_needed = True
 
         # v2.3: dipisah dari _memory_provider_dirty — pola sama lagi.
         if self._vision_provider_dirty:
@@ -428,9 +443,20 @@ class SettingsPage(QWidget):
                 self._show_error(str(e))
                 return
             logger.info("Settings GUI: Vision provider diperbarui, restart dibutuhkan.")
+            restart_needed = True
 
         logger.info("Settings GUI: perubahan disimpan.")
         self._load_snapshot()
+
+        # v3.1 Phase 6 (Language Model Change Auto-Restart) — di-emit PALING
+        # AKHIR, SETELAH semua konfigurasi tersimpan (persist dulu, baru
+        # restart, sesuai urutan spec). MainWindow (pemilik seluruh manager)
+        # yang mendengarkan Signal ini lewat `_handle_restart_requested()` —
+        # SettingsPage sendiri TIDAK PERNAH menyentuh Companion/Vision/
+        # Avatar/VoiceManager secara langsung, persis pola
+        # `open_developer_dashboard_requested` yang sudah ada.
+        if restart_needed:
+            self.restart_requested.emit()
 
     def _show_error(self, message: str) -> None:
         self._error_label.setText(message)

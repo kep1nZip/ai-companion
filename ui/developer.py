@@ -408,6 +408,7 @@ class DeveloperDashboard(QDialog):
             f"Energy: {pd.get('energy_current')}",
             f"Relevant Preference Count: {pd.get('relevant_preference_count')}",
             f"Response Style Signal: {style}",
+            f"Continuity Signal: {pd.get('continuity_state', 'unknown')}",
             f"Personalization Signal Available: {'Yes' if pd.get('personalization_signal_available') else 'No'}",
         ]
         self._set_card(self._personalization_card, "\n".join(lines))
