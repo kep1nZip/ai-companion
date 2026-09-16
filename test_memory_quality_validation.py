@@ -81,6 +81,32 @@ CONTRADICTION_SEQUENCE = [
     "Sekarang aku sudah tidak suka americano.",
 ]
 
+# v3.2 Phase 1+3+8 — kategori test BARU (spec §12 Test A/B/C), diperluas
+# dari file yang sudah ada (BUKAN file baru). Skenario ini PERSIS contoh
+# yang dipakai spec v3.2 & audit Phase 0-nya sendiri.
+PROJECT_SPECIFIC_CASES = [
+    # CUKUP SPESIFIK (menyebut project/subjek konkret) -> harus tersimpan.
+    "Aku sedang mengerjakan LeadEstate.",
+    "Aku lagi debugging backend LeadEstate.",
+]
+
+ACTIVITY_VAGUE_CASES = [
+    # TERLALU SAMAR (tidak menyebut subjek/project apa pun) -> jangan
+    # tersimpan. INI BUKAN "noise" biasa (bukan basa-basi) — akar masalahnya
+    # kurang spesifik, dipisah kategorinya dari NOISE_CASES supaya laporan
+    # tidak mencampur dua alasan penolakan yang berbeda (v3.2 Phase 0 Audit
+    # §1).
+    "Aku lagi debugging.",
+    "wkwk capek",
+]
+
+TEMPORARY_INTENT_CASES = [
+    # Minat SAAT INI, bukan preferensi stabil — v3.0 Item A sudah
+    # mengarahkan kategori "project"/"general" (BUKAN "preference"), TAPI
+    # tetap harus TERSIMPAN (bukan diabaikan seperti hedging/noise).
+    "Aku lagi pengen belajar Rust malam ini.",
+]
+
 
 @dataclass
 class CaseResult:
@@ -111,8 +137,22 @@ class CaseResult:
             # provider run (`contradiction_final_state`), BUKAN di sini.
             # Lihat _build_report() untuk assertion tegas yang sebenarnya.
             return True
-        if self.category == "explicit_fact":
+        if self.category in ("explicit_fact", "project_specific", "temporary_intent"):
+            # v3.2 Phase 1+3+8: "project_specific" (cukup spesifik, mis.
+            # menyebut nama project) dan "temporary_intent" (minat SAAT INI,
+            # v3.0 Item A) SAMA-SAMA harus tersimpan — beda dari
+            # explicit_fact cuma soal KATEGORI yang dipilih (preference vs
+            # project/general), yang SENGAJA tidak di-hard-assert di sini
+            # (spec sendiri bilang "tergantung konteks" — fleksibel, dicatat
+            # di laporan, bukan pass/fail ketat per kategori).
             return self.got_memory and self.error is None
+        if self.category == "activity_vague":
+            # v3.2 Phase 1+3: PERSIS kebalikan project_specific — aktivitas
+            # yang TIDAK menyebut subjek/project konkret harus DIABAIKAN,
+            # sama seperti noise/hedging, TAPI dipisah kategorinya di
+            # laporan supaya jelas alasan penolakannya beda (kurang
+            # spesifik, BUKAN basa-basi/ragu-ragu).
+            return (not self.got_memory) and self.error is None
         # noise & hedging: lolos kalau TIDAK menghasilkan memory
         return (not self.got_memory) and self.error is None
 
@@ -338,6 +378,28 @@ def _run_provider(provider_label: str, extractor_factory, test_id_prefix: str) -
         for text in HEDGING_CASES:
             tid = f"{test_id_prefix}{idx:02d}"
             r = _run_case(extractor, memory_manager, tid, "hedging", text, "Tidak disimpan ([])")
+            run.results.append(r)
+            _print_case(r)
+            idx += 1
+
+        # v3.2 Phase 1+3+8 — kategori BARU (Test A/B/C spec §12).
+        for text in PROJECT_SPECIFIC_CASES:
+            tid = f"{test_id_prefix}{idx:02d}"
+            r = _run_case(extractor, memory_manager, tid, "project_specific", text, "Memory disimpan (cukup spesifik)")
+            run.results.append(r)
+            _print_case(r)
+            idx += 1
+
+        for text in ACTIVITY_VAGUE_CASES:
+            tid = f"{test_id_prefix}{idx:02d}"
+            r = _run_case(extractor, memory_manager, tid, "activity_vague", text, "Tidak disimpan (terlalu samar)")
+            run.results.append(r)
+            _print_case(r)
+            idx += 1
+
+        for text in TEMPORARY_INTENT_CASES:
+            tid = f"{test_id_prefix}{idx:02d}"
+            r = _run_case(extractor, memory_manager, tid, "temporary_intent", text, "Memory disimpan (minat saat ini)")
             run.results.append(r)
             _print_case(r)
             idx += 1

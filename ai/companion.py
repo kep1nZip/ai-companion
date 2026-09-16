@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from google.genai import types
@@ -55,7 +56,7 @@ def _format_memories(memories: list[Memory]) -> str:
     return "Berikut hal-hal yang Arona ingat tentang Teacher:\n" + "\n".join(lines)
 
 
-def _persist_fact(memory_manager: MemoryManager, fact: dict) -> Optional[Memory]:
+def _persist_fact(memory_manager: MemoryManager, fact: dict, history: Optional[list] = None) -> Optional[Memory]:
     """v2.5 Phase 4 (Persistence Semantics, §11 spec): SATU-SATUNYA tempat
     yang menerjemahkan relation hasil keputusan MemoryExtractor jadi
     panggilan MemoryManager yang benar. Module-level (BUKAN method
@@ -78,29 +79,62 @@ def _persist_fact(memory_manager: MemoryManager, fact: dict) -> Optional[Memory]
     walau sudah difilter di extract()) TIDAK BOLEH menggagalkan fakta
     lain dalam pesan yang sama (§25 guardrail #9 "Avoid destructive
     deletion", error isolation konsisten dengan pola MemoryExtractionWorker
-    v2.1 §22/§31)."""
+    v2.1 §22/§31).
+
+    v3.2 Phase 6 (Memory Explainability) — `history` OPSIONAL, default
+    `None` = perilaku IDENTIK sebelum v3.2 (backward-compat penuh, termasuk
+    untuk `test_memory_quality_validation.py` yang memanggil fungsi ini
+    tanpa argumen ketiga). Kalau diisi (list, mutable — dikirim closure
+    produksi sebagai REFERENSI ke `Companion._memory_decision_history`,
+    BUKAN `self` yang di-capture, tetap patuh aturan v2.1 §11/§12), setiap
+    panggilan menambah SATU record berisi relation/category/content/outcome
+    — data yang SUDAH ADA & deterministik sejak v2.5 (`MemoryExtractor.
+    extract()` sudah menghitung `relation`), cuma SEBELUMNYA hilang begitu
+    saja setelah `_persist_fact()` selesai. Tidak ada LLM/reasoning baru
+    dipanggil di sini — murni mencatat keputusan yang sudah terjadi."""
     relation = fact.get("relation", RELATION_NEW)
     category = fact["category"]
     content = fact["content"]
     target_id = fact.get("target_memory_id")
+    record = {
+        "timestamp": datetime.now(timezone.utc),
+        "category": category,
+        "content": content,
+        "relation": relation,
+        "target_memory_id": target_id,
+        "outcome": None,
+        "error": None,
+    }
 
     try:
         if relation == RELATION_SUPERSEDES and target_id is not None:
-            return memory_manager.supersede_memory(target_id, category, content)
+            result = memory_manager.supersede_memory(target_id, category, content)
+            record["outcome"] = "superseded"
+            return result
         elif relation == RELATION_UPDATE and target_id is not None:
             memory_manager.update_memory(target_id, content=content, category=category)
+            record["outcome"] = "updated"
             return None
         elif relation == RELATION_DUPLICATE and target_id is not None:
             memory_manager.touch_memory(target_id)
+            record["outcome"] = "duplicate_ignored"
             return None
         else:
             # RELATION_NEW, atau relation lain tapi target_id kosong
             # (seharusnya sudah di-fallback ke NEW oleh MemoryExtractor.
             # extract(), ini jaring pengaman kedua — bukan jalur yang
             # diharapkan tereksekusi dalam kondisi normal).
-            return memory_manager.save_memory(category, content)
+            result = memory_manager.save_memory(category, content)
+            record["outcome"] = "saved"
+            return result
     except Exception as e:
+        record["outcome"] = "failed"
+        record["error"] = str(e)
         logger.warning("Gagal mempersist fakta memori (relation={}): {}", relation, e)
+        return None
+    finally:
+        if history is not None:
+            history.append(record)
         return None
 
 
@@ -148,6 +182,18 @@ class Companion:
         self._ai_model_name = ai_model_name or MODEL_NAME
         self._conversation = Conversation()
         self._memory_manager = MemoryManager()
+        # v3.2 Phase 6+7 (Memory Explainability + Developer Observability) —
+        # in-memory murni (TIDAK ADA database baru, TIDAK ADA MemoryManager2),
+        # rolling window sederhana (pola sama dengan `PerformanceTracker`,
+        # developer/performance_debug.py) supaya tidak tumbuh tanpa batas.
+        # Data yang dicatat SUDAH deterministik & sudah ada sejak v2.5/v2.7
+        # (relation model, hasil retrieval) — cuma sebelumnya hilang begitu
+        # saja setelah dipakai sekali. Hilang total kalau app di-restart —
+        # ini DISENGAJA (observability sesi berjalan, bukan histori
+        # permanen — kalau permanen dibutuhkan itu jadi milestone lain).
+        self._memory_decision_history: list[dict] = []
+        self._recall_decision_history: list[dict] = []
+        self._MEMORY_HISTORY_LIMIT = 30
         # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
         # dipakai (bukan re-deteksi dari type() nanti) — murni string
         # read-only untuk Developer Dashboard, tidak memengaruhi extract()
@@ -522,6 +568,65 @@ class Companion:
             ),
         }
 
+    def get_memory_decision_debug_snapshot(self) -> dict:
+        """v3.2 Phase 6+7 (Memory Explainability + Developer Observability) —
+        READ-ONLY, murni membaca `_memory_decision_history`/
+        `_recall_decision_history` yang SUDAH ADA (v3.2, in-memory, rolling
+        window). TIDAK memicu ekstraksi/recall baru apa pun.
+
+        Field mengikuti istilah jujur yang diminta spec v3.2 §10 (Signal/
+        Count/State/Decision) — TIDAK ADA klaim "LLM used memory
+        successfully", cuma angka deterministik dari keputusan yang SUDAH
+        terjadi (relation model v2.5, retrieval v1.9-v2.6).
+
+        - `candidate_count`: jumlah fakta yang diproses `_persist_fact()`
+          dalam window terakhir (SEMUANYA sudah lolos filter hedging/noise
+          di dalam `extract()` — "candidate" di sini berarti "fakta yang
+          benar-benar sampai ke tahap persist", bukan "seluruh kemungkinan
+          sebelum LLM memutuskan").
+        - `saved_count` / `updated_count` / `superseded_count` /
+          `duplicate_ignored_count` / `failed_count`: breakdown per outcome
+          — SEMUA dihitung dari `outcome` yang SAMA PERSIS dipakai
+          `_persist_fact()` untuk memutuskan pemanggilan MemoryManager mana
+          yang dieksekusi (bukan angka terpisah yang bisa tidak sinkron).
+        - `recent_decisions`: daftar ringkas (maks 10 terbaru) untuk
+          ditampilkan Dashboard, format sesuai contoh spec §9 (Decision +
+          Reason ringkas).
+        - `recall_query_count` / `recall_result_total`: dari
+          `_recall_decision_history` — jumlah event recall & total memory
+          yang dikembalikan dalam window terakhir."""
+        decisions = self._memory_decision_history
+        outcome_counts = {"saved": 0, "updated": 0, "superseded": 0, "duplicate_ignored": 0, "failed": 0}
+        for d in decisions:
+            outcome = d.get("outcome")
+            if outcome in outcome_counts:
+                outcome_counts[outcome] += 1
+
+        recent_decisions = [
+            {
+                "category": d["category"],
+                "content_preview": d["content"][:60],
+                "relation": d["relation"],
+                "outcome": d["outcome"],
+            }
+            for d in decisions[-10:]
+        ]
+
+        recalls = self._recall_decision_history
+        recall_result_total = sum(r["result_count"] for r in recalls)
+
+        return {
+            "candidate_count": len(decisions),
+            "saved_count": outcome_counts["saved"],
+            "updated_count": outcome_counts["updated"],
+            "superseded_count": outcome_counts["superseded"],
+            "duplicate_ignored_count": outcome_counts["duplicate_ignored"],
+            "failed_count": outcome_counts["failed"],
+            "recent_decisions": recent_decisions,
+            "recall_query_count": len(recalls),
+            "recall_result_total": recall_result_total,
+        }
+
     # ---------- Memory ----------
 
     def list_memories(self, limit: int = 50) -> list[Memory]:
@@ -839,7 +944,9 @@ class Companion:
 
         if relevant:
             logger.info("Memory Relevance: {} match ditemukan", len(relevant))
-            return relevant[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
+            result = relevant[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
+            self._record_recall(user_input, result, signal="keyword_match")
+            return result
 
         logger.info("Memory Relevance: tidak ada match, fallback ke recency")
         # v2.6 Phase 1: fallback recency JUGA rawan kontaminasi marker — malah
@@ -851,7 +958,26 @@ class Companion:
         # (default, TIDAK diubah) tetap berlaku seperti biasa.
         recent = self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT * 2)
         filtered = [m for m in recent if not m.content.startswith("__ARONA_")]
-        return filtered[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
+        result = filtered[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
+        self._record_recall(user_input, result, signal="recency_fallback")
+        return result
+
+    def _record_recall(self, query_text: str, result: list[Memory], signal: str) -> None:
+        """v3.2 Phase 6/7 (Memory Explainability + Developer Observability) —
+        murni MENCATAT hasil retrieval yang SUDAH TERJADI (`_select_relevant_
+        memories()` di atas), TIDAK menambah logic recall apa pun baru.
+        Rolling window sama seperti `_memory_decision_history` — in-memory,
+        hilang saat restart, bukan database baru. `query_text` dipotong
+        pendek (bukan full text) — cukup untuk Teacher mengenali konteksnya
+        di Dashboard, tidak perlu menyimpan seluruh kalimat panjang."""
+        self._recall_decision_history.append({
+            "timestamp": datetime.now(timezone.utc),
+            "query_preview": query_text.strip()[:60],
+            "signal": signal,
+            "result_count": len(result),
+        })
+        if len(self._recall_decision_history) > self._MEMORY_HISTORY_LIMIT:
+            del self._recall_decision_history[:-self._MEMORY_HISTORY_LIMIT]
 
     def _select_related_memories_for_extraction(self, user_input: str) -> list[Memory]:
         """v2.5 Phase 2 (Related Memory Retrieval, §9 spec) — sengaja
@@ -1017,6 +1143,12 @@ class Companion:
         memory_extractor = self._memory_extractor
         memory_manager = self._memory_manager
         select_related = self._select_related_memories_for_extraction
+        # v3.2 Phase 6/7: capture REFERENSI ke list yang sama (BUKAN `self`)
+        # — patuh aturan v2.1 §11/§12 di atas. List ini mutable, append dari
+        # closure (thread worker) langsung terlihat oleh Dashboard (thread
+        # GUI) tanpa perlu API tambahan apa pun.
+        decision_history = self._memory_decision_history
+        history_limit = self._MEMORY_HISTORY_LIMIT
 
         def _extract_and_save() -> None:
             related_memories = select_related(user_input)
@@ -1025,7 +1157,12 @@ class Companion:
                 logger.info("Tidak ada fakta layak diingat dari pesan ini.")
                 return
             for fact in facts:
-                _persist_fact(memory_manager, fact)
+                _persist_fact(memory_manager, fact, history=decision_history)
+            # v3.2 Phase 6: rolling window sederhana (pola PerformanceTracker)
+            # — bukan database, murni supaya list ini tidak tumbuh tanpa
+            # batas selama sesi panjang.
+            if len(decision_history) > history_limit:
+                del decision_history[:-history_limit]
 
         self._memory_worker.submit(_extract_and_save)
 

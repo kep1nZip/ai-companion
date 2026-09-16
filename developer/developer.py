@@ -64,6 +64,9 @@ class DeveloperSnapshot:
     # generik, nol perubahan skema besar diperlukan untuk field baru di
     # dalamnya nanti).
     personalization_debug: Optional[dict]
+    # v3.2 Phase 6+7 — pola IDENTIK personalization_debug (Optional[dict]
+    # generik).
+    memory_decision_debug: Optional[dict]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -223,6 +226,16 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil personalization debug snapshot: {}", e)
             return None
 
+    def get_memory_decision_debug(self) -> Optional[dict]:
+        """v3.2 Phase 6+7: read-only passthrough ke
+        Companion.get_memory_decision_debug_snapshot(). Pola try/except
+        IDENTIK getter lain di file ini."""
+        try:
+            return self._companion.get_memory_decision_debug_snapshot()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil memory decision debug snapshot: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -275,6 +288,7 @@ class DeveloperService:
             tts_model_name=self.get_tts_model_name(),
             context_debug=self.get_context_debug(),
             personalization_debug=self.get_personalization_debug(),
+            memory_decision_debug=self.get_memory_decision_debug(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -342,6 +356,23 @@ class DeveloperService:
             f"- Continuity Signal: {pd['continuity_state']}" if pd and pd.get('continuity_state') is not None else "- Continuity Signal: unknown",
             f"- Personalization Signal Available: {'Yes' if pd and pd.get('personalization_signal_available') else 'No'}",
         ]
+
+        # v3.2 Phase 6+7 (Memory Explainability + Developer Observability) —
+        # SEMUA angka jujur dari `_memory_decision_history`/
+        # `_recall_decision_history` yang sudah ada (in-memory, rolling
+        # window terakhir, hilang saat restart — bukan histori permanen).
+        md = s.memory_decision_debug
+        lines += [
+            "", "## Memory Decisions",
+            f"- Candidate Count (window terakhir): {md['candidate_count']}" if md else "- Candidate Count: unknown",
+            f"- Saved: {md['saved_count']} | Updated: {md['updated_count']} | Superseded: {md['superseded_count']} | Duplicate (ignored): {md['duplicate_ignored_count']} | Failed: {md['failed_count']}" if md else "- Breakdown: unknown",
+            f"- Recall Query Count (window terakhir): {md['recall_query_count']}" if md else "- Recall Query Count: unknown",
+            f"- Recall Result Total: {md['recall_result_total']}" if md else "- Recall Result Total: unknown",
+        ]
+        if md and md.get("recent_decisions"):
+            lines.append("- Recent Decisions:")
+            for d in md["recent_decisions"]:
+                lines.append(f"    - [{d['relation']}] \"{d['content_preview']}\" ({d['category']}) -> {d['outcome']}")
 
         for title, obj in [
             ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),

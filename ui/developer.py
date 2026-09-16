@@ -173,6 +173,10 @@ class DeveloperDashboard(QDialog):
         # sama-sama "signal state" yang Teacher mungkin cek berbarengan saat
         # menilai apakah Arona terasa adaptif.
         self._personalization_card = self._add_section("Personalization")
+        # v3.2 Phase 6+7 — card baru, ditaruh setelah Personalization
+        # (sama-sama "signal/decision state" yang berguna dilihat
+        # berbarengan).
+        self._memory_decisions_card = self._add_section("Memory Decisions")
         self._behavior_card = self._add_section("Behavior")
         self._vision_card = self._add_section("Vision")
         self._routine_card = self._add_section("Routine")
@@ -312,6 +316,7 @@ class DeveloperDashboard(QDialog):
         self._render_providers(snapshot)
         self._render_context(snapshot)
         self._render_personalization(snapshot)
+        self._render_memory_decisions(snapshot)
         self._render_behavior(snapshot)
         self._render_vision(snapshot)
         self._render_routine(snapshot)
@@ -412,6 +417,32 @@ class DeveloperDashboard(QDialog):
             f"Personalization Signal Available: {'Yes' if pd.get('personalization_signal_available') else 'No'}",
         ]
         self._set_card(self._personalization_card, "\n".join(lines))
+
+    def _render_memory_decisions(self, snapshot: DeveloperSnapshot) -> None:
+        """v3.2 Phase 6+7 (Memory Explainability + Developer Observability):
+        card read-only — murni menampilkan `memory_decision_debug` yang
+        sudah dikumpulkan `DeveloperService`. SEMUA angka jujur (Signal/
+        Count/State/Decision, spec v3.2 §10) — TIDAK ADA klaim "LLM
+        berhasil memakai memory ini", cuma keputusan deterministik
+        (relation model v2.5) yang sudah terjadi."""
+        md = snapshot.memory_decision_debug
+        if md is None:
+            self._set_card(self._memory_decisions_card, "Not available")
+            return
+        lines = [
+            f"Candidate Count (recent): {md.get('candidate_count', 'unknown')}",
+            f"Saved: {md.get('saved_count')} | Updated: {md.get('updated_count')} | "
+            f"Superseded: {md.get('superseded_count')} | Duplicate: {md.get('duplicate_ignored_count')} | "
+            f"Failed: {md.get('failed_count')}",
+            f"Recall Query Count (recent): {md.get('recall_query_count', 'unknown')}",
+            f"Recall Result Total: {md.get('recall_result_total', 'unknown')}",
+        ]
+        recent = md.get("recent_decisions") or []
+        if recent:
+            lines.append("Recent Decisions:")
+            for d in recent[-5:]:
+                lines.append(f"  [{d['relation']}] \"{d['content_preview']}\" -> {d['outcome']}")
+        self._set_card(self._memory_decisions_card, "\n".join(lines))
 
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:
         b = snapshot.behavior

@@ -63,6 +63,31 @@ sementara" menandakan sesuatu yang sedang berlangsung, bukan preferensi
 permanen — tetap layak diingat, tapi jangan disamakan kategorinya dengan
 preferensi yang dinyatakan sebagai kebiasaan/kesukaan tetap.
 
+v3.2 — Sebelum menyimpan aktivitas/project SAAT INI, pastikan informasinya
+CUKUP SPESIFIK untuk berguna kalau dipanggil kembali nanti. Kalimat yang
+terlalu samar (tidak menyebut subjek/project/hal konkret apa pun) JANGAN
+disimpan — ini bukan basa-basi biasa, tapi juga tidak actionable sebagai
+memory:
+
+Contoh TERLALU SAMAR (jangan simpan): "Aku lagi debugging" — debugging APA?
+Tidak ada informasi yang bisa dipanggil kembali secara berguna nanti.
+
+Contoh CUKUP SPESIFIK (simpan sebagai project/general): "Aku lagi debugging
+backend LeadEstate" — menyebut project konkret (LeadEstate), jadi actionable
+kalau nanti Teacher bilang "lanjut yang backend kemarin".
+
+Prinsip ini BUKAN soal ada/tidaknya kata "lagi"/"sedang" — kalimat yang sama
+persis strukturnya bisa layak simpan kalau menyebut hal konkret, dan tidak
+layak simpan kalau tidak. Kalau ragu apakah suatu aktivitas cukup spesifik,
+JANGAN simpan — sama seperti aturan hedging di atas, lebih baik tidak
+menyimpan apa pun daripada menyimpan fakta yang terlalu samar untuk berguna.
+
+Jangan menebak atau mengarang detail yang TIDAK disebutkan Teacher — kalau
+sumbernya cuma bilang "aku suka ngoding", simpan persis itu ("Teacher suka
+ngoding"), JANGAN diperkaya jadi "Teacher suka ngoding pakai VS Code" kalau
+VS Code tidak pernah disebut. Spesifik itu memakai detail yang MEMANG ADA di
+kalimat sumber, bukan menambah detail yang tidak pernah dinyatakan.
+
 Sebelum pesan Teacher, kamu KADANG akan diberi daftar "memori terkait yang sudah
 ada" (masing-masing dengan id angka). Kalau daftar itu ADA, tentukan hubungan
 ("relation") setiap fakta baru yang kamu ekstrak terhadap memori terkait tersebut:
