@@ -135,7 +135,6 @@ def _persist_fact(memory_manager: MemoryManager, fact: dict, history: Optional[l
     finally:
         if history is not None:
             history.append(record)
-        return None
 
 
 class Companion:
