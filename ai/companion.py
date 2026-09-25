@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -21,6 +20,14 @@ from ai.memory_extractor import (
     RELATION_SUPERSEDES,
 )
 from ai.conversation_signals import detect_closure, detect_style_preference
+# v3.3 Phase 1+3 (Conversation Anchor Detection + Contextual Memory Query) —
+# `extract_keywords`/`filter_search_keywords` SATU-SATUNYA tempat definisi
+# "kata signifikan untuk pencarian memori" (sebelumnya diduplikasi inline di
+# 2 tempat file ini, lihat docstring `ai/reference_signals.py`).
+# `detect_reference_signal` murni sinyal observasional (pola IDENTIK
+# `detect_closure` di atas), dipakai HANYA untuk Developer Dashboard +
+# menentukan kapan anchor conversation dicoba di `_select_relevant_memories`.
+from ai.reference_signals import detect_reference_signal, extract_keywords, filter_search_keywords
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder, categorize_continuity
 from database.memory_manager import MemoryManager, Memory
@@ -593,7 +600,24 @@ class Companion:
           Reason ringkas).
         - `recall_query_count` / `recall_result_total`: dari
           `_recall_decision_history` — jumlah event recall & total memory
-          yang dikembalikan dalam window terakhir."""
+          yang dikembalikan dalam window terakhir.
+
+        v3.3 Phase 10 (Developer Observability, spec §16) — 3 field
+        tambahan, SEMUA dihitung dari `_recall_decision_history` yang
+        sudah diperluas `_record_recall()` (v3.3 Phase 1/3/7), TIDAK ADA
+        state baru:
+        - `reference_signal_count`: berapa recall dalam window ini pesan
+          Teacher-nya terdeteksi mengandung pola referensi ("yang tadi",
+          dst) — MURNI hitungan sinyal deterministik (`detect_reference_
+          signal()`), BUKAN klaim "LLM berhasil resolve referensi" (spec
+          §16 eksplisit melarang klaim non-deterministik semacam itu).
+        - `conversation_anchor_used_count` / `vision_assisted_count`:
+          berapa kali `query_source` yang BENAR-BENAR dipakai adalah
+          "conversation_anchor"/"vision_context" — jujur menunjukkan
+          seberapa sering pesan Teacher sendiri tidak cukup, dan sumber
+          fallback mana yang menyelamatkan pencarian.
+        - `recent_recalls`: ringkasan (maks 10 terbaru) untuk Dashboard,
+          field mengikuti pola `recent_decisions` di atas."""
         decisions = self._memory_decision_history
         outcome_counts = {"saved": 0, "updated": 0, "superseded": 0, "duplicate_ignored": 0, "failed": 0}
         for d in decisions:
@@ -613,6 +637,20 @@ class Companion:
 
         recalls = self._recall_decision_history
         recall_result_total = sum(r["result_count"] for r in recalls)
+        reference_signal_count = sum(1 for r in recalls if r.get("reference_signal"))
+        conversation_anchor_used_count = sum(1 for r in recalls if r.get("query_source") == "conversation_anchor")
+        vision_assisted_count = sum(1 for r in recalls if r.get("query_source") == "vision_context")
+
+        recent_recalls = [
+            {
+                "query_preview": r["query_preview"],
+                "signal": r["signal"],
+                "reference_signal": r.get("reference_signal", False),
+                "query_source": r.get("query_source", "current_message"),
+                "result_count": r["result_count"],
+            }
+            for r in recalls[-10:]
+        ]
 
         return {
             "candidate_count": len(decisions),
@@ -624,6 +662,10 @@ class Companion:
             "recent_decisions": recent_decisions,
             "recall_query_count": len(recalls),
             "recall_result_total": recall_result_total,
+            "reference_signal_count": reference_signal_count,
+            "conversation_anchor_used_count": conversation_anchor_used_count,
+            "vision_assisted_count": vision_assisted_count,
+            "recent_recalls": recent_recalls,
         }
 
     # ---------- Memory ----------
@@ -880,7 +922,21 @@ class Companion:
             logger.warning("Gagal membangun ephemeral context, lanjut tanpa itu: {}", e)
 
         try:
-            memories = self._timed("memory_query", lambda: self._select_relevant_memories(user_input))
+            # v3.3 Phase 7 (Vision-assisted Reference): `vision_context`
+            # SUDAH tersedia sebagai parameter method ini (dipanggil chat()
+            # lewat `self._vision.get_context()` SEBELUM `_build_contents`
+            # dipanggil sama sekali, TIDAK ADA capture Vision baru di sini)
+            # — sebelum v3.3 parameter ini TIDAK diteruskan ke
+            # `_select_relevant_memories`, jadi jalur chat() biasa tidak
+            # pernah memakai Vision sebagai bantuan recall (beda dari jalur
+            # autonomous yang SUDAH memakainya sejak v3.0, lihat
+            # `_relevant_memories_for_autonomous`). Diteruskan di sini
+            # murni supaya kedua jalur konsisten — Vision TETAP hanya
+            # dipakai sebagai fallback PALING AKHIR (lihat implementasi
+            # `_select_relevant_memories`), bukan authority.
+            memories = self._timed(
+                "memory_query", lambda: self._select_relevant_memories(user_input, vision_context)
+            )
             memory_text = _format_memories(memories)
             if memory_text:
                 contents.append(
@@ -898,7 +954,9 @@ class Companion:
             self._performance.record("context_assembly", (time.perf_counter() - _assembly_start) * 1000)
         return contents
 
-    def _select_relevant_memories(self, user_input: str) -> list[Memory]:
+    def _select_relevant_memories(
+        self, user_input: str, vision_context: Optional[VisionContext] = None
+    ) -> list[Memory]:
         """v1.9 Companion Intelligence — Memory Relevance (§8). Sebelumnya
         SELALU load N memori TERBARU tanpa peduli topik pesan Teacher saat
         ini — jadi memori project lama bisa nyempil di obrolan santai, atau
@@ -908,43 +966,84 @@ class Companion:
 
         `search_memory()` mencocokkan SATU string utuh sebagai substring,
         bukan multi-kata — jadi di sini dipanggil PER KATA signifikan dari
-        pesan Teacher (kata >= 4 huruf, heuristik sederhana buat menyaring
-        kata sambung pendek seperti 'aku'/'kamu'/'ini'), hasilnya
-        digabung+dedupe. Kalau nol match sama sekali, fallback ke N-terbaru
-        (perilaku lama) — supaya tidak tiba-tiba context memori kosong total
-        untuk pesan yang memang tidak mengandung kata kunci apa pun."""
-        keywords = [w for w in re.findall(r"\w+", user_input.lower()) if len(w) >= 4]
+        pesan Teacher, hasilnya digabung+dedupe.
 
-        seen_ids: set[int] = set()
-        relevant: list[Memory] = []
-        for word in keywords[:5]:  # batasi jumlah query per pesan
-            try:
-                matches = self._memory_manager.search_memory(word, limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
-            except Exception as e:
-                logger.warning("Memory relevance search gagal untuk kata '{}': {}", word, e)
-                continue
-            for m in matches:
-                # v2.6 Phase 1 (Context Hygiene, §26 spec v2.6 — resmi masuk
-                # scope sekarang, SEBELUMNYA sengaja ditunda sebagai known
-                # issue terpisah di v2.5 Phase 0 Audit §5). Filter PERSIS
-                # sama dengan yang sudah ada di
-                # `_select_related_memories_for_extraction()` (v2.5) — marker
-                # internal (RoutineHistory/InitiativeHistory/InternalState/
-                # Relationship) TIDAK BOLEH bocor sebagai "memori tentang
-                # Teacher" ke chat context. Solusi di context boundary ini
-                # (retrieval), BUKAN menghapus/mengubah memory internal itu
-                # sendiri (§26: "solusi harus dilakukan di context boundary,
-                # bukan dengan menghapus memory internal").
-                if m.id not in seen_ids and not m.content.startswith("__ARONA_"):
-                    seen_ids.add(m.id)
-                    relevant.append(m)
-            if len(relevant) >= EPHEMERAL_CONTEXT_MEMORY_LIMIT:
-                break
+        v3.3 Phase 1+3+7 (Conversation Anchor Detection, Contextual Memory
+        Query, Vision-assisted Reference — spec
+        V3.3_CONTEXTUAL_RECALL_REFERENCE_INTELLIGENCE.md): SEBELUM v3.3,
+        kata kunci HANYA diambil dari `user_input` (kata >= 4 huruf, TANPA
+        stopword filter — Phase 0 Audit v3.3 menemukan ini bug nyata: kata
+        referensi generik seperti "yang"/"tadi"/"lanjut" ikut lolos jadi
+        substring pencarian, yang buat pesan seperti "lanjut yang tadi"
+        bisa mencocokkan HAMPIR SEMUA memory secara acak — persis kondisi
+        yang spec §23 larang: "memory irrelevant masuk sebagai reference
+        utama"). Sekarang, sesuai Recall Priority spec §8 (Current message
+        > Immediate previous turns > Active anchor > Recent memory), kata
+        kunci dicoba berurutan dari SUMBER yang paling relevan ke paling
+        umum, BERHENTI di sumber pertama yang menghasilkan kata kunci:
+
+        1. `user_input` sendiri (SETELAH stopword filter) — TIDAK berubah
+           urutan prioritasnya dari v1.9, cuma sekarang lebih bersih.
+        2. Kalau tier 1 nihil (baik karena pesan memang tidak punya kata
+           kunci berguna sama sekali, ATAU karena kata kuncinya ada tapi
+           TIDAK match satu pun memory DAN pesan ini terdeteksi bersifat
+           referensial — `detect_reference_signal()`, mis. "yang ini
+           error" yang kata "error"-nya sendiri belum pernah tersimpan
+           sebagai memory) — coba beberapa pesan Teacher TERAKHIR di
+           `Conversation` yang SUDAH ADA (in-memory, TIDAK dipersist di
+           sini, lihat `_recent_conversation_anchor_keywords()`). Ini
+           PERSIS target Phase 1 (Conversation Anchor Detection) & Phase 3
+           (Contextual Memory Query) — TIDAK membuat anchor/reference
+           database baru (Hard Boundary §2), murni membaca ulang riwayat
+           percakapan yang sudah ada tiap kali dibutuhkan.
+        3. Kalau tier 2 JUGA nihil, dengan syarat gate YANG SAMA (kosong
+           ATAU referensial) DAN Vision fresh tersedia — coba kata kunci
+           dari Vision (`_vision_query_text()`, SUDAH ADA sejak v3.0,
+           TIDAK ada capture Vision baru). Phase 7 contoh persis: "yang
+           ini error" + Vision menunjukkan dialog error di layar. Vision
+           cuma SUPPORTING signal paling akhir, BUKAN authority — dicoba
+           PALING TERAKHIR, setelah conversation.
+
+        Syarat "kosong ATAU referensial" ini SENGAJA membatasi eskalasi
+        tier 2/3 supaya TIDAK terpicu untuk pesan biasa yang kebetulan
+        tidak match memory apa pun (mis. topik benar-benar baru pertama
+        kali dibicarakan) — kalau eskalasi terjadi tanpa syarat itu,
+        memory dari topik SEBELUMNYA berisiko nyempil ke topik BARU yang
+        tidak berkaitan sama sekali, persis kondisi yang spec v3.3 §23
+        FAIL condition larang ("old topic mendominasi current topic").
+        Eskalasi HANYA masuk akal kalau ada sinyal bahwa pesan ini memang
+        MENUNJUK ke sesuatu yang sudah dibicarakan sebelumnya.
+
+        Kalau SEMUA sumber di atas nihil, fallback ke N-terbaru (perilaku
+        lama v1.9, TIDAK berubah) — supaya tidak tiba-tiba context memori
+        kosong total."""
+        reference_signal = detect_reference_signal(user_input)
+        current_keywords = filter_search_keywords(extract_keywords(user_input))
+        should_try_wider_context = (not current_keywords) or reference_signal
+
+        relevant, matched_source = self._search_memories_by_keywords(current_keywords)
+        if relevant:
+            matched_source = "current_message"
+
+        if not relevant and should_try_wider_context:
+            anchor_keywords = self._recent_conversation_anchor_keywords()
+            relevant, matched_source = self._search_memories_by_keywords(anchor_keywords)
+            if relevant:
+                matched_source = "conversation_anchor"
+
+        if not relevant and should_try_wider_context and vision_context is not None:
+            vision_keywords = filter_search_keywords(extract_keywords(self._vision_query_text(vision_context)))
+            relevant, matched_source = self._search_memories_by_keywords(vision_keywords)
+            if relevant:
+                matched_source = "vision_context"
 
         if relevant:
-            logger.info("Memory Relevance: {} match ditemukan", len(relevant))
+            logger.info("Memory Relevance: {} match ditemukan (source={})", len(relevant), matched_source)
             result = relevant[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
-            self._record_recall(user_input, result, signal="keyword_match")
+            self._record_recall(
+                user_input, result, signal=matched_source,
+                reference_signal=reference_signal, query_source=matched_source,
+            )
             return result
 
         logger.info("Memory Relevance: tidak ada match, fallback ke recency")
@@ -958,22 +1057,128 @@ class Companion:
         recent = self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT * 2)
         filtered = [m for m in recent if not m.content.startswith("__ARONA_")]
         result = filtered[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
-        self._record_recall(user_input, result, signal="recency_fallback")
+        self._record_recall(
+            user_input, result, signal="recency_fallback",
+            reference_signal=reference_signal, query_source="recency_fallback",
+        )
         return result
 
-    def _record_recall(self, query_text: str, result: list[Memory], signal: str) -> None:
+    def _search_memories_by_keywords(self, keywords: list[str]) -> tuple[list[Memory], Optional[str]]:
+        """v3.3 — diekstrak dari body `_select_relevant_memories()` v1.9-v3.2
+        (LOGIC PENCARIAN & FILTER MARKER TIDAK BERUBAH SATU BARIS PUN, murni
+        dipindah jadi method terpisah) supaya bisa dipanggil BERULANG untuk
+        3 tier sumber keyword (current message / conversation anchor /
+        vision) TANPA menduplikasi loop `search_memory()` + filter marker
+        `__ARONA_` tiga kali (spec §7: "Jangan membuat recall engine
+        kedua" — di sini malah dikonsolidasi jadi SATU, dipakai 3 kali).
+
+        Return `(memories, "keyword_match")` kalau ADA hasil, atau
+        `([], None)` kalau `keywords` kosong ATAU nol match — caller
+        (`_select_relevant_memories`) yang menimpa label "keyword_match"
+        jadi label sumber yang lebih spesifik (current_message/
+        conversation_anchor/vision_context) sesuai tier mana yang berhasil."""
+        seen_ids: set[int] = set()
+        relevant: list[Memory] = []
+        for word in keywords[:5]:  # batasi jumlah query per pesan
+            try:
+                matches = self._memory_manager.search_memory(word, limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
+            except Exception as e:
+                logger.warning("Memory relevance search gagal untuk kata '{}': {}", word, e)
+                continue
+            for m in matches:
+                # v2.6 Phase 1 (Context Hygiene, §26 spec v2.6) — marker
+                # internal (RoutineHistory/InitiativeHistory/InternalState/
+                # Relationship) TIDAK BOLEH bocor sebagai "memori tentang
+                # Teacher" ke chat context.
+                if m.id not in seen_ids and not m.content.startswith("__ARONA_"):
+                    seen_ids.add(m.id)
+                    relevant.append(m)
+            if len(relevant) >= EPHEMERAL_CONTEXT_MEMORY_LIMIT:
+                break
+        return (relevant, "keyword_match") if relevant else ([], None)
+
+    def _recent_conversation_anchor_keywords(self, max_user_turns: int = 3, max_keywords: int = 8) -> list[str]:
+        """v3.3 Phase 1 (Conversation Anchor Detection) — TIDAK membuat
+        anchor object/state baru yang dipersist di mana pun (Hard Boundary
+        §2: "Conversation database baru" & "Persistent topic database"
+        dilarang keras). Anchor di sini murni DIHITUNG ULANG tiap kali
+        dipanggil, dari `Conversation.get_history()` yang SUDAH ADA
+        (in-memory, process-lifetime) — sesuai definisi eksplisit spec
+        §4: "Anchor adalah short-lived conversation signal", BUKAN
+        persistent memory. Kalau dipanggil lagi sedetik kemudian dengan
+        history yang sudah berubah, hasilnya otomatis ikut berubah — tidak
+        ada snapshot yang bisa basi.
+
+        Membaca `max_user_turns` pesan Teacher (role='user') SEBELUM pesan
+        yang sedang diproses saat ini (pesan saat ini sendiri sudah dicoba
+        duluan oleh pemanggil dan gagal menghasilkan keyword — itu sebabnya
+        method ini dipanggil sama sekali). Kata signifikan diambil lewat
+        `extract_keywords()` + `filter_search_keywords()` yang SAMA PERSIS
+        dipakai untuk pesan saat ini (spec §7: "reuse `_select_relevant_
+        memories(query)`, jangan membuat recall engine kedua" — utilitas
+        ekstraksi kata kuncinya pun SATU-SATUNYA, dipakai bersama, lihat
+        `ai/reference_signals.py`).
+
+        Urutan turn PALING BARU didahulukan (Recall Priority spec §8:
+        "Immediate previous turns" sebelum turn yang lebih lama) — dedupe
+        mempertahankan urutan kemunculan pertama, yang berarti dari turn
+        TERBARU duluan."""
+        history = self._conversation.get_history()
+        # Pesan user TERAKHIR di history saat method ini dipanggil sudah
+        # PASTI pesan yang sedang diproses chat() saat ini (ditambahkan
+        # `add_user_message()` sebelum `_build_contents()` dipanggil) —
+        # index [0] setelah reversed() karenanya dilewati (slice [1:]),
+        # supaya anchor benar-benar berasal dari turn SEBELUMNYA.
+        user_messages = [
+            content.parts[0].text
+            for content in reversed(history)
+            if content.role == "user" and content.parts and content.parts[0].text
+        ]
+        previous_user_messages = user_messages[1:1 + max_user_turns]
+
+        seen: set[str] = set()
+        anchor_keywords: list[str] = []
+        for text in previous_user_messages:
+            for word in filter_search_keywords(extract_keywords(text)):
+                if word not in seen:
+                    seen.add(word)
+                    anchor_keywords.append(word)
+            if len(anchor_keywords) >= max_keywords:
+                break
+        return anchor_keywords[:max_keywords]
+
+    def _record_recall(
+        self,
+        query_text: str,
+        result: list[Memory],
+        signal: str,
+        reference_signal: bool = False,
+        query_source: str = "current_message",
+    ) -> None:
         """v3.2 Phase 6/7 (Memory Explainability + Developer Observability) —
         murni MENCATAT hasil retrieval yang SUDAH TERJADI (`_select_relevant_
         memories()` di atas), TIDAK menambah logic recall apa pun baru.
         Rolling window sama seperti `_memory_decision_history` — in-memory,
         hilang saat restart, bukan database baru. `query_text` dipotong
         pendek (bukan full text) — cukup untuk Teacher mengenali konteksnya
-        di Dashboard, tidak perlu menyimpan seluruh kalimat panjang."""
+        di Dashboard, tidak perlu menyimpan seluruh kalimat panjang.
+
+        v3.3 Phase 10 (Developer Observability): dua field baru,
+        `reference_signal` (bool, dari `detect_reference_signal()` —
+        murni sinyal deterministik, BUKAN klaim "LLM memahami referensi
+        dengan benar", spec §16 eksplisit melarang klaim semacam itu) dan
+        `query_source` (sumber kata kunci yang benar-benar dipakai:
+        "current_message" | "conversation_anchor" | "vision_context" |
+        "recency_fallback" — SAMA PERSIS nilai yang dipakai `signal` untuk
+        3 sumber pertama, dipisah jadi field sendiri supaya Dashboard bisa
+        menampilkan "Anchor Source" tanpa perlu parsing string `signal`)."""
         self._recall_decision_history.append({
             "timestamp": datetime.now(timezone.utc),
             "query_preview": query_text.strip()[:60],
             "signal": signal,
             "result_count": len(result),
+            "reference_signal": reference_signal,
+            "query_source": query_source,
         })
         if len(self._recall_decision_history) > self._MEMORY_HISTORY_LIMIT:
             del self._recall_decision_history[:-self._MEMORY_HISTORY_LIMIT]
@@ -998,8 +1203,22 @@ class Companion:
         terkait, extractor cukup tahu itu ('related_memories=[]' -> prompt
         relation-aware tidak disisipkan sama sekali, model otomatis
         menghasilkan relation="NEW" untuk semua fakta, persis §9 "Jangan
-        memberikan seluruh database ke model")."""
-        keywords = [w for w in re.findall(r"\w+", user_input.lower()) if len(w) >= 4]
+        memberikan seluruh database ke model").
+
+        v3.3 Phase 0 Audit — perbaikan simetris: kata kunci sekarang lewat
+        `filter_search_keywords()` yang sama dipakai `_select_relevant_
+        memories()` (lihat `ai/reference_signals.py`), supaya kata generik
+        ("yang"/"tadi"/dst) tidak ikut jadi kandidat pencarian memori
+        terkait di sini juga — mencegah MemoryExtractor menerima daftar
+        "memori terkait" yang bising, yang berisiko salah menyarankan
+        relation UPDATE/SUPERSEDES terhadap memory yang sebetulnya tidak
+        berkaitan sama sekali (cuma kebetulan sama-sama mengandung kata
+        umum). TIDAK ada fallback anchor-conversation/vision di sini (BEDA
+        dari `_select_relevant_memories`) — kontrak `extract()` membaca
+        SATU pesan Teacher (lihat catatan v2.1 §18 di
+        `check_autonomous_opportunity`), jadi memperluas sumber kata kunci
+        ke luar pesan itu sendiri di luar scope perbaikan ini."""
+        keywords = filter_search_keywords(extract_keywords(user_input))
 
         seen_ids: set[int] = set()
         related: list[Memory] = []

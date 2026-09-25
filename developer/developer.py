@@ -369,10 +369,31 @@ class DeveloperService:
             f"- Recall Query Count (window terakhir): {md['recall_query_count']}" if md else "- Recall Query Count: unknown",
             f"- Recall Result Total: {md['recall_result_total']}" if md else "- Recall Result Total: unknown",
         ]
+        # v3.3 Phase 10 (Contextual Recall & Reference Intelligence) — SEMUA
+        # angka di bawah murni sinyal deterministik (`detect_reference_
+        # signal()`, sumber keyword yang benar-benar dipakai) — TIDAK ADA
+        # klaim "LLM correctly understood the reference" (spec §16
+        # eksplisit melarang), cuma menunjukkan APAKAH pesan Teacher
+        # terdeteksi bersifat referensial dan DARI MANA kata kunci
+        # pencarian memori itu akhirnya didapat.
+        if md:
+            lines += [
+                f"- Reference Signal Detected (window terakhir): {md.get('reference_signal_count', 0)}",
+                f"- Conversation Anchor Used: {md.get('conversation_anchor_used_count', 0)} | "
+                f"Vision-assisted: {md.get('vision_assisted_count', 0)}",
+            ]
         if md and md.get("recent_decisions"):
             lines.append("- Recent Decisions:")
             for d in md["recent_decisions"]:
                 lines.append(f"    - [{d['relation']}] \"{d['content_preview']}\" ({d['category']}) -> {d['outcome']}")
+        if md and md.get("recent_recalls"):
+            lines.append("- Recent Recalls:")
+            for r in md["recent_recalls"]:
+                ref_tag = "reference" if r.get("reference_signal") else "-"
+                lines.append(
+                    f"    - \"{r['query_preview']}\" [{ref_tag}] source={r.get('query_source', 'current_message')} "
+                    f"-> {r['result_count']} memori"
+                )
 
         for title, obj in [
             ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),

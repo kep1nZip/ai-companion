@@ -436,12 +436,28 @@ class DeveloperDashboard(QDialog):
             f"Failed: {md.get('failed_count')}",
             f"Recall Query Count (recent): {md.get('recall_query_count', 'unknown')}",
             f"Recall Result Total: {md.get('recall_result_total', 'unknown')}",
+            # v3.3 Phase 10 (Contextual Recall & Reference Intelligence) —
+            # sinyal deterministik murni (bukan klaim "LLM understood the
+            # reference"): berapa kali pesan Teacher terdeteksi referensial,
+            # dan dari mana kata kunci pencarian akhirnya berhasil didapat.
+            f"Reference Signal Detected (recent): {md.get('reference_signal_count', 0)}",
+            f"Conversation Anchor Used: {md.get('conversation_anchor_used_count', 0)} | "
+            f"Vision-assisted: {md.get('vision_assisted_count', 0)}",
         ]
         recent = md.get("recent_decisions") or []
         if recent:
             lines.append("Recent Decisions:")
             for d in recent[-5:]:
                 lines.append(f"  [{d['relation']}] \"{d['content_preview']}\" -> {d['outcome']}")
+        recent_recalls = md.get("recent_recalls") or []
+        if recent_recalls:
+            lines.append("Recent Recalls:")
+            for r in recent_recalls[-5:]:
+                ref_tag = "reference" if r.get("reference_signal") else "-"
+                lines.append(
+                    f"  \"{r['query_preview']}\" [{ref_tag}] source={r.get('query_source', 'current_message')} "
+                    f"-> {r['result_count']} memori"
+                )
         self._set_card(self._memory_decisions_card, "\n".join(lines))
 
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:
