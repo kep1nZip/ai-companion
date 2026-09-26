@@ -236,6 +236,78 @@ def run() -> None:
             f"topik baru non-referensial TIDAK boleh memicu tier conversation_anchor -> {recall_log}",
         )
 
+    # ---------------------------------------------------------------
+    # T60-T61: Hotfix — reinforcement note di akhir `contents` saat
+    # reference_signal terdeteksi (temuan Teacher: model Local menebak
+    # alih-alih bertanya klarifikasi di Test B — lihat komentar di
+    # `_build_contents()`). Note ini HARUS muncul untuk pesan referensial,
+    # dan TIDAK BOLEH muncul untuk pesan biasa (supaya tidak menambah
+    # panjang prompt tanpa alasan / memicu over-clarification).
+    # ---------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as tmp:
+        from ai.context_builder import ContextBuilder
+        from behavior.behavior_state import DEFAULT_BEHAVIOR_STATE
+
+        db_path = os.path.join(tmp, "test_hotfix.db")
+        companion = _make_companion(db_path)
+        companion._context_builder = ContextBuilder()
+        companion._performance = None
+        companion._memory_manager.save_memory("project", "Teacher sedang mengerjakan LeadEstate")
+        companion._memory_manager.save_memory("project", "Teacher sedang mengerjakan project Arona")
+
+        companion._conversation.add_user_message("Aku lagi ngerjain LeadEstate dan project Arona.")
+        companion._conversation.add_assistant_message("Oke, semangat Teacher!")
+        companion._conversation.add_user_message("lanjut yang tadi")
+
+        contents_ambiguous = companion._build_contents("lanjut yang tadi", DEFAULT_BEHAVIOR_STATE)
+        all_text_ambiguous = "\n".join(
+            part.text or "" for c in contents_ambiguous for part in (c.parts or [])
+        )
+        _check(
+            "T60",
+            "WAJIB tanya klarifikasi singkat dulu" in all_text_ambiguous,
+            "reinforcement note (varian >1 kandidat) HARUS muncul di contents untuk pesan referensial ambigu",
+        )
+        _check(
+            "T62",
+            "Teacher sedang mengerjakan LeadEstate" in all_text_ambiguous
+            and "Teacher sedang mengerjakan project Arona" in all_text_ambiguous,
+            "note HARUS menyebutkan isi KONKRET tiap kandidat verbatim (bukan cuma meta-instruksi abstrak) "
+            "— ini fix round 2 supaya Local tidak perlu inferensi tambahan",
+        )
+
+        companion2 = _make_companion(os.path.join(tmp, "test_hotfix2.db"))
+        companion2._context_builder = ContextBuilder()
+        companion2._performance = None
+        companion2._conversation.add_user_message("Aku suka kopi americano.")
+        contents_normal = companion2._build_contents("Aku suka kopi americano.", DEFAULT_BEHAVIOR_STATE)
+        all_text_normal = "\n".join(
+            part.text or "" for c in contents_normal for part in (c.parts or [])
+        )
+        _check(
+            "T61",
+            "WAJIB tanya klarifikasi singkat dulu" not in all_text_normal,
+            "reinforcement note varian ambigu TIDAK BOLEH muncul untuk pesan biasa (non-referensial)",
+        )
+
+        # T63: pesan referensial TAPI kandidat cuma 1 (Test A) -> harus pakai
+        # varian RINGAN (tanpa "WAJIB tanya klarifikasi"), supaya tidak
+        # memicu over-clarification untuk kasus yang sebetulnya jelas.
+        companion3 = _make_companion(os.path.join(tmp, "test_hotfix3.db"))
+        companion3._context_builder = ContextBuilder()
+        companion3._performance = None
+        companion3._memory_manager.save_memory("project", "Teacher sedang mengerjakan backend LeadEstate")
+        companion3._conversation.add_user_message("Aku lagi debugging backend LeadEstate.")
+        companion3._conversation.add_assistant_message("Semangat, Teacher.")
+        companion3._conversation.add_user_message("lanjut yang tadi")
+        contents_clear = companion3._build_contents("lanjut yang tadi", DEFAULT_BEHAVIOR_STATE)
+        all_text_clear = "\n".join(part.text or "" for c in contents_clear for part in (c.parts or []))
+        _check(
+            "T63",
+            "WAJIB tanya klarifikasi singkat dulu" not in all_text_clear and "lanjutkan dengan percaya diri" in all_text_clear,
+            "kandidat tunggal (Test A) harus pakai varian ringan, TIDAK memaksa klarifikasi",
+        )
+
 
 def main() -> None:
     run()

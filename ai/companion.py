@@ -947,8 +947,72 @@ class Companion:
                 )
         except Exception as e:
             logger.warning("Gagal memuat memori, lanjut tanpa memori: {}", e)
+            # v3.3 hotfix: `memories` HARUS tetap terdefinisi walau blok di
+            # atas gagal (exception SEBELUM baris assignment sempat
+            # jalan) — supaya blok reference-note di bawah (yang membaca
+            # `memories`) tidak ikut meledak jadi NameError. `[]` di sini
+            # artinya "tidak ada kandidat untuk disebutkan", note di bawah
+            # otomatis jatuh ke varian generik (bukan varian dengan daftar
+            # kandidat).
+            memories = []
 
         contents.extend(history)
+
+        # v3.3 Phase 2/4 hotfix ROUND 2 (Teacher konfirmasi: setelah hotfix
+        # round 1 — reinforcement note abstrak di posisi akhir `contents` —
+        # Gemini SUDAH sesuai ekspektasi, TAPI Local TETAP menebak). Root
+        # cause lebih dalam: note round 1 masih berupa META-INSTRUKSI
+        # ("kalau ada >1 kemungkinan, tanya") yang MENGHARUSKAN model
+        # sendiri menyimpulkan APA SAJA kandidatnya dari riwayat percakapan
+        # — satu langkah inferensi tambahan yang model kecil/quantized
+        # (LM Studio, dsb — lihat `ai/providers/local_provider.py`) terbukti
+        # tidak cukup andal melakukannya, apalagi dengan `temperature=0.85`
+        # yang SENGAJA tinggi di provider itu (mitigasi masalah lain, lihat
+        # dokumentasi di `LocalProvider.__init__` — TIDAK diubah di sini,
+        # bukan wewenang v3.3 mengubah trade-off yang sudah didokumentasikan
+        # Teacher sendiri).
+        #
+        # Perbaikan: kalau kandidat memory yang BENAR-BENAR ditemukan
+        # `_select_relevant_memories()` (`memories`, variabel yang SUDAH
+        # ADA di atas, TIDAK dihitung ulang) lebih dari satu DAN pesan ini
+        # terdeteksi referensial — kandidatnya DISEBUTKAN LANGSUNG,
+        # verbatim, di dalam note (bukan cuma "ada beberapa kemungkinan").
+        # Ini menghilangkan satu langkah inferensi yang tadinya dibebankan
+        # ke model: model tidak perlu lagi MENCARI SENDIRI apa saja
+        # kandidatnya, tinggal MEMILIH ANTARA yang sudah eksplisit
+        # disebutkan. TETAP TIDAK ADA LLM kedua/classifier ambiguity
+        # (Hard Boundary §2) — daftar kandidat ini murni hasil `search_
+        # memory()` yang SUDAH dihitung buat mengisi `[Konteks memori]` di
+        # atas, cuma direuse+ditegaskan ulang di posisi paling akhir.
+        #
+        # Kalau kandidat CUMA SATU (atau nol) — TIDAK ada dasar untuk
+        # bilang "ada beberapa pilihan" (itu akan jadi klaim yang tidak
+        # didukung data, bisa membuat model malah bertanya klarifikasi
+        # padahal harusnya tidak perlu, spec §23 juga melarang over-
+        # clarification) — note tetap muncul TAPI versi ringan yang cuma
+        # menegaskan "pakai riwayat/memori di atas untuk memahami
+        # maksudnya", tanpa memaksakan cabang "tanya klarifikasi".
+        if detect_reference_signal(user_input):
+            if len(memories) > 1:
+                candidate_lines = "\n".join(f"{i + 1}. {m.content}" for i, m in enumerate(memories[:5]))
+                note_text = (
+                    "[INSTRUKSI PENTING — bukan pesan Teacher, jangan disebut ke Teacher: "
+                    "pesan Teacher barusan menunjuk balik ke sesuatu yang sudah dibicarakan "
+                    f"sebelumnya, dan ADA LEBIH DARI SATU kemungkinan yang cocok:\n{candidate_lines}\n"
+                    "Kalau Arona TIDAK YAKIN persis yang mana dari daftar itu yang dimaksud "
+                    "Teacher, WAJIB tanya klarifikasi singkat dulu (sebutkan pilihannya) — "
+                    "JANGAN langsung menjawab salah satu secara asal tanpa bertanya."
+                )
+            else:
+                note_text = (
+                    "[Catatan internal — bukan pesan Teacher, jangan disebut ke Teacher: "
+                    "pesan Teacher barusan tampaknya menunjuk balik ke sesuatu yang sudah "
+                    "dibicarakan sebelumnya (\"yang tadi\"/\"itu\"/\"lanjut\"/dst). Gunakan "
+                    "riwayat percakapan & konteks memori di atas untuk memahami maksudnya, "
+                    "lalu lanjutkan dengan percaya diri."
+                )
+            contents.append(types.Content(role="user", parts=[types.Part(text=note_text)]))
+
         logger.info("Ephemeral Context Injected")
         if self._performance is not None:
             self._performance.record("context_assembly", (time.perf_counter() - _assembly_start) * 1000)
