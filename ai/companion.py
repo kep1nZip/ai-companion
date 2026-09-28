@@ -28,6 +28,10 @@ from ai.conversation_signals import detect_closure, detect_style_preference
 # `detect_closure` di atas), dipakai HANYA untuk Developer Dashboard +
 # menentukan kapan anchor conversation dicoba di `_select_relevant_memories`.
 from ai.reference_signals import detect_reference_signal, extract_keywords, filter_search_keywords
+# v3.4 Phase 1+2 (Memory Relevance Ranking) — modul BARU, pure/deterministic
+# (lihat docstring `ai/memory_ranking.py`), dipakai `_search_memories_by_
+# keywords()` untuk meranking kandidat SEBELUM dipangkas ke budget akhir.
+from ai.memory_ranking import rank_and_select, score_memory, RetrievalOutcome
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder, categorize_continuity
 from database.memory_manager import MemoryManager, Memory
@@ -36,7 +40,7 @@ from behavior.behavior_state import BehaviorState, DEFAULT_BEHAVIOR_STATE
 from vision.vision import Vision
 from vision.vision_context import VisionContext
 from config.settings import GEMINI_API_KEY, CONVERSATION_HISTORY_MAX_MESSAGES
-from config.constants import MODEL_NAME, EPHEMERAL_CONTEXT_MEMORY_LIMIT
+from config.constants import MODEL_NAME, EPHEMERAL_CONTEXT_MEMORY_LIMIT, MEMORY_CANDIDATE_POOL_LIMIT
 from config.logger import logger
 
 from routine.routine import Routine
@@ -46,6 +50,24 @@ from initiative.initiative import Initiative
 from initiative.initiative_decision import DecisionResult
 
 from developer.performance_debug import PerformanceTracker
+
+
+from developer.performance_debug import PerformanceTracker
+
+# v3.3 hotfix ROUND 3 — dipakai `_build_contents()` untuk menyaring kandidat
+# yang layak masuk note klarifikasi ambigu (lihat komentar lengkap di sana).
+# Kandidat #2 dst harus punya skor `ai/memory_ranking.py::score_memory()`
+# minimal RATIO ini dikali skor kandidat #1 supaya dianggap "kemungkinan
+# yang sama masuk akal" — di bawah itu dianggap noise (mis. cuma cocok satu
+# keyword generik/nama Arona sendiri), bukan kandidat bersaing sungguhan.
+# Angka 0.6 dipilih dari perbandingan konkret 2 skenario nyata (lihat
+# `test_v3_3_reference_recall.py` T70): kandidat ambigu yang GENUINE (mis.
+# "LeadEstate" vs "project Arona", sama-sama match >=1 keyword spesifik)
+# rasio skornya ~0.7-0.8; kandidat NOISE (cuma match nama Arona sendiri vs
+# kandidat yang match 3 keyword sekaligus) rasionya ~0.2-0.3 — ambang 0.6
+# memisahkan keduanya dengan jelas tanpa perlu tuning rumit.
+_REFERENCE_NOTE_SCORE_RATIO = 0.6
+_REFERENCE_NOTE_MAX_CANDIDATES = 3
 
 
 class RateLimitError(Exception):
@@ -199,6 +221,20 @@ class Companion:
         # permanen — kalau permanen dibutuhkan itu jadi milestone lain).
         self._memory_decision_history: list[dict] = []
         self._recall_decision_history: list[dict] = []
+        # v3.3 hotfix round 3 (temuan Teacher: note klarifikasi ambigu di
+        # `_build_contents()` sempat mendaftar memory yang TIDAK relevan
+        # sebagai "kandidat", karena hotfix round 2 mengambil `memories[:5]`
+        # apa adanya tanpa cek seberapa jauh skornya dari kandidat teratas).
+        # Cache skor deterministik (`ai/memory_ranking.py::score_memory()`)
+        # dari pemanggilan `_select_relevant_memories()` PALING TERAKHIR —
+        # diisi ulang SETIAP kali method itu dipanggil, dibaca `_build_
+        # contents()` tepat setelahnya (pemanggilan sinkron, sama thread,
+        # tidak ada risiko balapan). BUKAN riwayat/database — cuma "hasil
+        # perhitungan satu giliran terakhir", persis seperti kenapa
+        # `_recall_decision_history` juga in-memory & sekali pakai per
+        # observability, cuma ini TIDAK di-log sebagai histori (terlalu
+        # sering berubah untuk berguna sebagai riwayat).
+        self._last_recall_scores: dict[int, float] = {}
         self._MEMORY_HISTORY_LIMIT = 30
         # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
         # dipakai (bukan re-deteksi dari type() nanti) — murni string
@@ -648,9 +684,35 @@ class Companion:
                 "reference_signal": r.get("reference_signal", False),
                 "query_source": r.get("query_source", "current_message"),
                 "result_count": r["result_count"],
+                "candidate_count": r.get("candidate_count", 0),
+                "duplicates_removed": r.get("duplicates_removed", 0),
+                "top_score": r.get("top_score"),
+                "top_match_preview": r.get("top_match_preview"),
             }
             for r in recalls[-10:]
         ]
+
+        # v3.4 Phase 8/9 (Developer Observability, spec §12) — ringkasan
+        # recall PALING BARU dalam bentuk field datar, format PERSIS contoh
+        # dashboard di spec ("Candidates/Ranked/Selected/Duplicates
+        # Removed/Top Match/Top Score/Query Source") supaya Dashboard tidak
+        # perlu menggali `recent_recalls[-1]` sendiri. "Ranked" == jumlah
+        # kandidat yang benar-benar melalui `rank_memories()` — SAMA dengan
+        # `candidate_count` (semua kandidat yang lolos dedup memang selalu
+        # diranking, tidak ada yang dilewati diam-diam). `None` kalau belum
+        # pernah ada recall sama sekali dalam window (mis. app baru start).
+        last_ranking = None
+        if recalls:
+            last = recalls[-1]
+            last_ranking = {
+                "candidates": last.get("candidate_count", 0),
+                "ranked": last.get("candidate_count", 0),
+                "selected": last["result_count"],
+                "duplicates_removed": last.get("duplicates_removed", 0),
+                "query_source": last.get("query_source", "current_message"),
+                "top_match_preview": last.get("top_match_preview"),
+                "top_score": last.get("top_score"),
+            }
 
         return {
             "candidate_count": len(decisions),
@@ -666,6 +728,7 @@ class Companion:
             "conversation_anchor_used_count": conversation_anchor_used_count,
             "vision_assisted_count": vision_assisted_count,
             "recent_recalls": recent_recalls,
+            "last_ranking": last_ranking,
         }
 
     # ---------- Memory ----------
@@ -992,9 +1055,49 @@ class Companion:
         # clarification) — note tetap muncul TAPI versi ringan yang cuma
         # menegaskan "pakai riwayat/memori di atas untuk memahami
         # maksudnya", tanpa memaksakan cabang "tanya klarifikasi".
+        #
+        # v3.3 hotfix ROUND 3 (temuan Teacher: note round 2 pernah
+        # mendaftar memory yang TIDAK relevan sebagai "kandidat" — kasus
+        # nyata: kata "Arona" adalah nama Arona SENDIRI, muncul di hampir
+        # semua memory afeksi/relationship, jadi query yang menyebut
+        # "Arona" menarik banyak memory yang cuma KEBETULAN menyebut nama
+        # itu, bukan benar-benar kandidat topik yang bersaing). Root cause:
+        # round 2 mengambil `memories[:5]` APA ADANYA (asal masuk top-N
+        # hasil ranking v3.4) tanpa cek seberapa jauh skornya dari kandidat
+        # #1 — padahal `ai/memory_ranking.py::score_memory()` v3.4 SUDAH
+        # menghitung skor per kandidat, cuma belum dipakai untuk MENYARING
+        # di sini.
+        #
+        # Perbaikan: kandidat yang masuk daftar note SEKARANG cuma yang
+        # skornya (`self._last_recall_scores`, diisi `_select_relevant_
+        # memories()` TEPAT SEBELUM baris ini, TIDAK dihitung ulang) minimal
+        # `_REFERENCE_NOTE_SCORE_RATIO` (60%) dari skor kandidat #1 — kalau
+        # kandidat #2 dst jauh lebih lemah (mis. cuma cocok 1 keyword generik
+        # dibanding kandidat #1 yang cocok 3 keyword spesifik), itu bukan
+        # "kemungkinan yang sama masuk akal", jadi TIDAK didaftarkan sebagai
+        # kandidat bersaing. Dibatasi maksimal `_REFERENCE_NOTE_MAX_CANDIDATES`
+        # (3, turun dari 5) — daftar klarifikasi yang masuk akal untuk
+        # ditanyakan ke Teacher memang jarang lebih dari segelintir opsi.
+        # Kalau `self._last_recall_scores` kosong (mis. hasil recency
+        # fallback, TIDAK ada skor valid untuk dihitung — lihat `_select_
+        # relevant_memories()`), TIDAK ADA dasar untuk mengklaim ada
+        # >1 kandidat sama sekali, jadi otomatis jatuh ke varian ringan.
         if detect_reference_signal(user_input):
-            if len(memories) > 1:
-                candidate_lines = "\n".join(f"{i + 1}. {m.content}" for i, m in enumerate(memories[:5]))
+            scores = self._last_recall_scores or {}
+            strong_candidates = memories
+            if scores:
+                top_score = max(scores.get(m.id, 0.0) for m in memories) if memories else 0.0
+                threshold = top_score * _REFERENCE_NOTE_SCORE_RATIO
+                strong_candidates = [m for m in memories if scores.get(m.id, 0.0) >= threshold]
+            elif memories:
+                # Tidak ada skor valid (recency fallback) -> jangan anggap
+                # kandidat recency yang tidak ada hubungannya sebagai
+                # "pilihan yang bersaing".
+                strong_candidates = memories[:1]
+            strong_candidates = strong_candidates[:_REFERENCE_NOTE_MAX_CANDIDATES]
+
+            if len(strong_candidates) > 1:
+                candidate_lines = "\n".join(f"{i + 1}. {m.content}" for i, m in enumerate(strong_candidates))
                 note_text = (
                     "[INSTRUKSI PENTING — bukan pesan Teacher, jangan disebut ke Teacher: "
                     "pesan Teacher barusan menunjuk balik ke sesuatu yang sudah dibicarakan "
@@ -1085,30 +1188,73 @@ class Companion:
         current_keywords = filter_search_keywords(extract_keywords(user_input))
         should_try_wider_context = (not current_keywords) or reference_signal
 
-        relevant, matched_source = self._search_memories_by_keywords(current_keywords)
-        if relevant:
-            matched_source = "current_message"
+        # v3.4 Phase 1/2 (Memory Relevance Ranking): `raw_query_text` ikut
+        # diteruskan ke tiap tier — dipakai `score_memory()` (`ai/memory_
+        # ranking.py`) HANYA untuk bonus "exact phrase match" (spec §5.3).
+        # Untuk tier current_message, itu `user_input` apa adanya (satu
+        # kalimat utuh, exact-phrase match masuk akal). Untuk tier
+        # conversation_anchor, TIDAK ADA satu "kalimat utuh" yang mewakili
+        # anchor (bisa gabungan beberapa turn) — raw_query_text dibiarkan
+        # kosong (exact-phrase bonus otomatis nol, tier ini tetap jalan
+        # normal lewat match_count/coverage). Untuk tier vision_context,
+        # dipakai teks Vision itu sendiri (`_vision_query_text()`, SUDAH
+        # ADA, TIDAK dihitung ulang di sini — dipanggil lagi cuma untuk
+        # ambil teksnya, bukan re-capture Vision).
+        outcome = self._search_memories_by_keywords(current_keywords, raw_query_text=user_input)
+        matched_source = "current_message" if outcome.memories else None
+        winning_keywords, winning_raw_text = current_keywords, user_input
 
-        if not relevant and should_try_wider_context:
+        if not outcome.memories and should_try_wider_context:
             anchor_keywords = self._recent_conversation_anchor_keywords()
-            relevant, matched_source = self._search_memories_by_keywords(anchor_keywords)
-            if relevant:
+            outcome = self._search_memories_by_keywords(anchor_keywords)
+            if outcome.memories:
                 matched_source = "conversation_anchor"
+                winning_keywords, winning_raw_text = anchor_keywords, ""
 
-        if not relevant and should_try_wider_context and vision_context is not None:
-            vision_keywords = filter_search_keywords(extract_keywords(self._vision_query_text(vision_context)))
-            relevant, matched_source = self._search_memories_by_keywords(vision_keywords)
-            if relevant:
+        if not outcome.memories and should_try_wider_context and vision_context is not None:
+            vision_text = self._vision_query_text(vision_context)
+            vision_keywords = filter_search_keywords(extract_keywords(vision_text))
+            outcome = self._search_memories_by_keywords(vision_keywords, raw_query_text=vision_text)
+            if outcome.memories:
                 matched_source = "vision_context"
+                winning_keywords, winning_raw_text = vision_keywords, vision_text
 
-        if relevant:
-            logger.info("Memory Relevance: {} match ditemukan (source={})", len(relevant), matched_source)
-            result = relevant[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
-            self._record_recall(
-                user_input, result, signal=matched_source,
-                reference_signal=reference_signal, query_source=matched_source,
+        if outcome.memories:
+            logger.info(
+                "Memory Relevance: {} match ditemukan (source={}, candidates={}, duplicates={}, top_score={})",
+                len(outcome.memories), matched_source, outcome.candidate_count,
+                outcome.duplicates_removed, outcome.top_score,
             )
-            return result
+            # v3.3 hotfix round 3: cache skor PER MEMORY (bukan cuma
+            # top_score tunggal) dari kandidat yang benar-benar dipakai
+            # tier pemenang — dipakai `_build_contents()` untuk menyaring
+            # note klarifikasi (lihat komentar di `__init__`).
+            #
+            # v3.4 hotfix (round 4): SEKARANG ikut meneruskan `outcome.
+            # keyword_frequency` (v3.4, `ai/memory_ranking.py`) ke
+            # `score_memory()` di sini — SEBELUMNYA skor round 3 dihitung
+            # TANPA koreksi frekuensi, jadi kata yang TERLALU UMUM di
+            # database (mis. "arona", nama companion sendiri, match di
+            # puluhan memory afeksi) masih dapat bobot penuh berdasarkan
+            # panjang kata semata, membuat memory yang cuma KEBETULAN
+            # match keyword umum itu masih bisa lolos ambang
+            # `_REFERENCE_NOTE_SCORE_RATIO` (60%) dan ikut disebut sebagai
+            # "kandidat" di note klarifikasi — persis bug yang dilaporkan
+            # Teacher. Dengan koreksi frekuensi, kata umum otomatis dapat
+            # bobot kecil, skor memory yang cuma match lewat kata itu jadi
+            # jauh di bawah top_score, sehingga TIDAK lolos ambang lagi.
+            self._last_recall_scores = {
+                m.id: score_memory(m, winning_keywords, winning_raw_text, outcome.keyword_frequency)
+                for m in outcome.memories
+            }
+            self._record_recall(
+                user_input, outcome.memories, signal=matched_source,
+                reference_signal=reference_signal, query_source=matched_source,
+                candidate_count=outcome.candidate_count,
+                duplicates_removed=outcome.duplicates_removed,
+                top_score=outcome.top_score,
+            )
+            return outcome.memories
 
         logger.info("Memory Relevance: tidak ada match, fallback ke recency")
         # v2.6 Phase 1: fallback recency JUGA rawan kontaminasi marker — malah
@@ -1118,48 +1264,111 @@ class Companion:
         # daripada Teacher bikin memory baru), jadi wajar mendominasi urutan
         # "N paling baru" kalau tidak difilter. `include_superseded=False`
         # (default, TIDAK diubah) tetap berlaku seperti biasa.
+        #
+        # v3.4 Phase 5.5/7 catatan: fallback ini SENGAJA TIDAK diranking —
+        # tidak ada keyword untuk diskor terhadapnya (semua tier keyword
+        # sudah gagal), recency MEMANG satu-satunya sinyal yang tersisa di
+        # sini by design, bukan celah yang lupa ditangani.
         recent = self._memory_manager.load_memories(limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT * 2)
         filtered = [m for m in recent if not m.content.startswith("__ARONA_")]
         result = filtered[:EPHEMERAL_CONTEXT_MEMORY_LIMIT]
+        # v3.3 hotfix round 3: TIDAK ADA skor yang valid untuk hasil
+        # recency fallback (tidak ada keyword yang dicocokkan terhadapnya)
+        # — kosongkan cache, supaya `_build_contents()` TIDAK menganggap
+        # memory recency yang kebetulan lolos sebagai "kandidat setara"
+        # (lihat gating di `_build_contents()`).
+        self._last_recall_scores = {}
         self._record_recall(
             user_input, result, signal="recency_fallback",
             reference_signal=reference_signal, query_source="recency_fallback",
+            candidate_count=len(filtered), duplicates_removed=0, top_score=None,
         )
         return result
 
-    def _search_memories_by_keywords(self, keywords: list[str]) -> tuple[list[Memory], Optional[str]]:
-        """v3.3 — diekstrak dari body `_select_relevant_memories()` v1.9-v3.2
-        (LOGIC PENCARIAN & FILTER MARKER TIDAK BERUBAH SATU BARIS PUN, murni
-        dipindah jadi method terpisah) supaya bisa dipanggil BERULANG untuk
-        3 tier sumber keyword (current message / conversation anchor /
-        vision) TANPA menduplikasi loop `search_memory()` + filter marker
-        `__ARONA_` tiga kali (spec §7: "Jangan membuat recall engine
-        kedua" — di sini malah dikonsolidasi jadi SATU, dipakai 3 kali).
+    def _search_memories_by_keywords(
+        self, keywords: list[str], raw_query_text: str = ""
+    ) -> RetrievalOutcome:
+        """v1.9-v3.3 — loop pencarian & filter marker `__ARONA_` (TIDAK
+        BERUBAH satu baris pun sejak v3.3, cuma dipindah jadi method
+        terpisah supaya dipakai 3 tier). SEJAK v3.4, method ini TIDAK
+        LAGI mengembalikan kandidat mentah apa adanya dalam urutan
+        insertion (urutan hasil `search_memory()` per kata, yang TIDAK
+        mencerminkan relevansi sama sekali) — sekarang:
 
-        Return `(memories, "keyword_match")` kalau ADA hasil, atau
-        `([], None)` kalau `keywords` kosong ATAU nol match — caller
-        (`_select_relevant_memories`) yang menimpa label "keyword_match"
-        jadi label sumber yang lebih spesifik (current_message/
-        conversation_anchor/vision_context) sesuai tier mana yang berhasil."""
+        1. Kumpulkan kandidat MENTAH sampai `MEMORY_CANDIDATE_POOL_LIMIT`
+           (v3.4 Phase 5, lebih besar dari budget final
+           `EPHEMERAL_CONTEXT_MEMORY_LIMIT`) — supaya ranking di langkah 2
+           punya cukup bahan untuk memilih yang PALING relevan, bukan cuma
+           yang kebetulan ditemukan duluan. Sekalian dicatat berapa memory
+           yang di-match TIAP kata kunci (`keyword_frequency`) — v3.4
+           hotfix, dipakai `score_memory()`/`select_strong_candidates()`
+           untuk mendeteksi kata yang TERLALU UMUM di database SAAT INI
+           (mis. "arona" yang muncul di puluhan memory afeksi kalau nama
+           companion itu sendiri kebetulan jadi keyword) TANPA query
+           tambahan apa pun — angkanya sudah ada gratis dari pencarian yang
+           sama.
+        2. Rank deterministik lewat `rank_and_select()` (`ai/memory_
+           ranking.py`, v3.4 — pure function, TIDAK ADA LLM/network) lalu
+           pangkas ke `EPHEMERAL_CONTEXT_MEMORY_LIMIT` (budget final TIDAK
+           BERUBAH dari v1.9-v3.3, cuma SEKARANG isinya kandidat TERKUAT,
+           bukan yang pertama ditemukan).
+
+        Dedup by-id (marker `__ARONA_` + `seen_ids`) TIDAK BERUBAH dari
+        v1.9 — SEKARANG jumlah duplikat yang di-skip ikut dihitung
+        (`duplicates_removed`) murni untuk observability (spec v3.4 §12),
+        TIDAK memengaruhi logic apa pun.
+
+        Return `RetrievalOutcome` (v3.4, `ai/memory_ranking.py`) — caller
+        (`_select_relevant_memories`) yang menerjemahkan `candidate_count
+        == 0` jadi "tier ini gagal, coba tier berikutnya"."""
         seen_ids: set[int] = set()
-        relevant: list[Memory] = []
+        candidates: list[Memory] = []
+        duplicates_removed = 0
+        keyword_frequency: dict[str, int] = {}
         for word in keywords[:5]:  # batasi jumlah query per pesan
             try:
-                matches = self._memory_manager.search_memory(word, limit=EPHEMERAL_CONTEXT_MEMORY_LIMIT)
+                matches = self._memory_manager.search_memory(word, limit=MEMORY_CANDIDATE_POOL_LIMIT)
             except Exception as e:
                 logger.warning("Memory relevance search gagal untuk kata '{}': {}", word, e)
                 continue
+            # v3.4 hotfix: dicatat SEBELUM filter marker/dedup — frekuensi
+            # di sini murni menjawab "seberapa umum kata ini di database",
+            # bukan "berapa yang akhirnya dipakai jadi context" (dua
+            # pertanyaan berbeda; yang pertama yang relevan untuk menilai
+            # SPESIFISITAS kata itu sendiri).
+            keyword_frequency[word] = len(matches)
             for m in matches:
                 # v2.6 Phase 1 (Context Hygiene, §26 spec v2.6) — marker
                 # internal (RoutineHistory/InitiativeHistory/InternalState/
                 # Relationship) TIDAK BOLEH bocor sebagai "memori tentang
                 # Teacher" ke chat context.
-                if m.id not in seen_ids and not m.content.startswith("__ARONA_"):
-                    seen_ids.add(m.id)
-                    relevant.append(m)
-            if len(relevant) >= EPHEMERAL_CONTEXT_MEMORY_LIMIT:
+                if m.content.startswith("__ARONA_"):
+                    continue
+                if m.id in seen_ids:
+                    duplicates_removed += 1
+                    continue
+                seen_ids.add(m.id)
+                candidates.append(m)
+            if len(candidates) >= MEMORY_CANDIDATE_POOL_LIMIT:
                 break
-        return (relevant, "keyword_match") if relevant else ([], None)
+
+        if not candidates:
+            return RetrievalOutcome(
+                memories=[], candidate_count=0, duplicates_removed=duplicates_removed,
+                top_score=None, keyword_frequency=keyword_frequency,
+            )
+
+        selected, top_score = rank_and_select(
+            candidates, keywords, EPHEMERAL_CONTEXT_MEMORY_LIMIT, raw_query_text,
+            keyword_frequency=keyword_frequency,
+        )
+        return RetrievalOutcome(
+            memories=selected,
+            candidate_count=len(candidates),
+            duplicates_removed=duplicates_removed,
+            top_score=top_score,
+            keyword_frequency=keyword_frequency,
+        )
 
     def _recent_conversation_anchor_keywords(self, max_user_turns: int = 3, max_keywords: int = 8) -> list[str]:
         """v3.3 Phase 1 (Conversation Anchor Detection) — TIDAK membuat
@@ -1218,6 +1427,9 @@ class Companion:
         signal: str,
         reference_signal: bool = False,
         query_source: str = "current_message",
+        candidate_count: int = 0,
+        duplicates_removed: int = 0,
+        top_score: Optional[float] = None,
     ) -> None:
         """v3.2 Phase 6/7 (Memory Explainability + Developer Observability) —
         murni MENCATAT hasil retrieval yang SUDAH TERJADI (`_select_relevant_
@@ -1227,15 +1439,24 @@ class Companion:
         pendek (bukan full text) — cukup untuk Teacher mengenali konteksnya
         di Dashboard, tidak perlu menyimpan seluruh kalimat panjang.
 
-        v3.3 Phase 10 (Developer Observability): dua field baru,
-        `reference_signal` (bool, dari `detect_reference_signal()` —
-        murni sinyal deterministik, BUKAN klaim "LLM memahami referensi
-        dengan benar", spec §16 eksplisit melarang klaim semacam itu) dan
-        `query_source` (sumber kata kunci yang benar-benar dipakai:
-        "current_message" | "conversation_anchor" | "vision_context" |
-        "recency_fallback" — SAMA PERSIS nilai yang dipakai `signal` untuk
-        3 sumber pertama, dipisah jadi field sendiri supaya Dashboard bisa
-        menampilkan "Anchor Source" tanpa perlu parsing string `signal`)."""
+        v3.3 Phase 10: `reference_signal` (bool) dan `query_source` (string)
+        — lihat versi sebelumnya untuk detail.
+
+        v3.4 Phase 8 (Developer Observability, spec §12) — 3 field baru,
+        SEMUA dihitung dari `RetrievalOutcome` yang SUDAH ADA
+        (`_search_memories_by_keywords()`, `ai/memory_ranking.py`), TIDAK
+        ADA perhitungan ulang:
+        - `candidate_count`: jumlah kandidat mentah unik SEBELUM dipangkas
+          ke budget final (0 untuk jalur recency_fallback, karena di situ
+          `result` itu sendiri sudah = kandidatnya, tidak ada tahap ranking
+          terpisah — TIDAK dikarang jadi angka lain).
+        - `duplicates_removed`: berapa match diskip karena id sudah pernah
+          ditemukan lewat keyword lain di tier yang sama.
+        - `top_score`: skor deterministik kandidat #1 hasil ranking (`ai/
+          memory_ranking.py::score_memory()`) — TIDAK PERNAH diklaim
+          sebagai "confidence"/"certainty" (spec §12 Telemetry Rules
+          eksplisit melarang), murni angka mekanis yang bisa dijelaskan
+          persis dari mana asalnya (lihat docstring `score_memory()`)."""
         self._recall_decision_history.append({
             "timestamp": datetime.now(timezone.utc),
             "query_preview": query_text.strip()[:60],
@@ -1243,6 +1464,10 @@ class Companion:
             "result_count": len(result),
             "reference_signal": reference_signal,
             "query_source": query_source,
+            "candidate_count": candidate_count,
+            "duplicates_removed": duplicates_removed,
+            "top_score": round(top_score, 2) if top_score is not None else None,
+            "top_match_preview": result[0].content[:60] if result else None,
         })
         if len(self._recall_decision_history) > self._MEMORY_HISTORY_LIMIT:
             del self._recall_decision_history[:-self._MEMORY_HISTORY_LIMIT]

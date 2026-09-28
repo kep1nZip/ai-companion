@@ -386,13 +386,30 @@ class DeveloperService:
             lines.append("- Recent Decisions:")
             for d in md["recent_decisions"]:
                 lines.append(f"    - [{d['relation']}] \"{d['content_preview']}\" ({d['category']}) -> {d['outcome']}")
+        # v3.4 Phase 8/9 (Memory Relevance Ranking & Context Quality) —
+        # ditambahkan di BAWAH "Memory Decisions" yang sudah ada (spec §13
+        # eksplisit: "Reuse the existing Developer Dashboard... Do NOT
+        # create a Memory Ranking Dashboard"), BUKAN section/card baru.
+        # SEMUA angka murni dari `RetrievalOutcome`/`score_memory()` yang
+        # SUDAH dihitung `_search_memories_by_keywords()` — TIDAK ADA
+        # "confidence"/"semantic certainty" (spec §12 Telemetry Rules).
+        last_ranking = md.get("last_ranking") if md else None
+        if last_ranking:
+            lines += [
+                "- Memory Ranking (recall terakhir):",
+                f"    - Candidates: {last_ranking['candidates']} | Ranked: {last_ranking['ranked']} | "
+                f"Selected: {last_ranking['selected']} | Duplicates Removed: {last_ranking['duplicates_removed']}",
+                f"    - Query Source: {last_ranking['query_source']} | Top Score: {last_ranking['top_score']}",
+                f"    - Top Match: \"{last_ranking['top_match_preview']}\"" if last_ranking['top_match_preview'] else "    - Top Match: (tidak ada)",
+            ]
         if md and md.get("recent_recalls"):
             lines.append("- Recent Recalls:")
             for r in md["recent_recalls"]:
                 ref_tag = "reference" if r.get("reference_signal") else "-"
                 lines.append(
                     f"    - \"{r['query_preview']}\" [{ref_tag}] source={r.get('query_source', 'current_message')} "
-                    f"-> {r['result_count']} memori"
+                    f"candidates={r.get('candidate_count', 0)} dup_removed={r.get('duplicates_removed', 0)} "
+                    f"top_score={r.get('top_score')} -> {r['result_count']} memori"
                 )
 
         for title, obj in [

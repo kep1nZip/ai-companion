@@ -308,6 +308,56 @@ def run() -> None:
             "kandidat tunggal (Test A) harus pakai varian ringan, TIDAK memaksa klarifikasi",
         )
 
+    # ---------------------------------------------------------------
+    # T70: HOTFIX ROUND 3 — replikasi PERSIS bug yang dilaporkan Teacher
+    # lewat main_gui.py: "Aku lagi ngerjain LeadEstate dan Arona." lalu
+    # "lanjut yang tadi" — kata "Arona" adalah nama Arona SENDIRI, muncul
+    # di banyak memory afeksi/relationship yang TIDAK ADA hubungannya
+    # dengan "melanjutkan pekerjaan". Note klarifikasi TIDAK BOLEH
+    # mendaftar memory afeksi itu sebagai "kandidat topik" yang bersaing.
+    # ---------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as tmp:
+        from ai.context_builder import ContextBuilder
+        from behavior.behavior_state import DEFAULT_BEHAVIOR_STATE
+
+        db_path = os.path.join(tmp, "test_hotfix_r3.db")
+        companion = _make_companion(db_path)
+        companion._context_builder = ContextBuilder()
+        companion._performance = None
+
+        # Memory PERSIS pesan Teacher sendiri (match SEMUA anchor keyword:
+        # ngerjain+leadestate+arona) -> HARUS jadi kandidat kuat #1.
+        companion._memory_manager.save_memory("project", "Teacher lagi ngerjain LeadEstate dan Arona")
+        # 4 memory afeksi/relationship yang CUMA kebetulan menyebut "Arona"
+        # (nama Arona sendiri) -> HARUS dianggap noise, bukan kandidat.
+        companion._memory_manager.save_memory("preference", "Teacher loves Arona")
+        companion._memory_manager.save_memory("preference", "Teacher ingin Arona memeluknya dan berpelukan di atas ranjang")
+        companion._memory_manager.save_memory("preference", "Teacher menyukai Arona")
+        companion._memory_manager.save_memory("preference", "Teacher menunjukkan kasih sayang fisik kepada Arona (mencium Arona)")
+
+        companion._conversation.add_user_message("Aku lagi ngerjain LeadEstate dan Arona.")
+        companion._conversation.add_assistant_message("Oke Teacher, semangat!")
+        companion._conversation.add_user_message("lanjut yang tadi")
+
+        contents_r3 = companion._build_contents("lanjut yang tadi", DEFAULT_BEHAVIOR_STATE)
+        all_text_r3 = "\n".join(part.text or "" for c in contents_r3 for part in (c.parts or []))
+
+        _check(
+            "T70a",
+            "ranjang" not in all_text_r3 and "mencium" not in all_text_r3,
+            "note klarifikasi TIDAK BOLEH mendaftar memory afeksi/intim yang cuma kebetulan match nama 'Arona' -> \n" + all_text_r3,
+        )
+        _check(
+            "T70b",
+            "Teacher lagi ngerjain LeadEstate dan Arona" in all_text_r3,
+            "kandidat yang BENAR-BENAR match (persis pesan sebelumnya) harus tetap muncul di context",
+        )
+        _check(
+            "T70c",
+            "WAJIB tanya klarifikasi singkat dulu" not in all_text_r3,
+            "karena hanya ADA SATU kandidat kuat (yang lain noise), harus pakai varian RINGAN, bukan varian wajib-tanya",
+        )
+
 
 def main() -> None:
     run()

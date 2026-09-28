@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 APP_NAME = "Arona"
-VERSION = "2.0"
+VERSION = "3.4"
 MODEL_NAME = "gemini-3.6-flash"
 TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
 TTS_VOICE_NAME = "Zephyr"
 STT_MODEL_SIZE = "medium"
 EPHEMERAL_CONTEXT_MEMORY_LIMIT = 10
+
+# v3.4 Phase 5/9 (Candidate Selection / Context Budget) — jumlah kandidat
+# MENTAH yang dikumpulkan dari `search_memory()` SEBELUM diranking &
+# dipangkas ke `EPHEMERAL_CONTEXT_MEMORY_LIMIT`. Dibuat lebih besar dari
+# limit final SENGAJA — supaya ranking punya cukup bahan untuk memilih
+# kandidat TERKUAT, bukan cuma kandidat yang KEBETULAN ditemukan duluan
+# (insertion-order lama, sebelum v3.4). TIDAK mengubah limit FINAL yang
+# sampai ke LLM (tetap `EPHEMERAL_CONTEXT_MEMORY_LIMIT`, kontrak eksternal
+# tidak berubah) — cuma memperluas kolam kandidat di tahap SEBELUM
+# dipangkas.
+MEMORY_CANDIDATE_POOL_LIMIT = 30
 
 LOG_DIR = "logs"
 LOG_FILE = "app.log"

@@ -449,6 +449,21 @@ class DeveloperDashboard(QDialog):
             lines.append("Recent Decisions:")
             for d in recent[-5:]:
                 lines.append(f"  [{d['relation']}] \"{d['content_preview']}\" -> {d['outcome']}")
+        # v3.4 Phase 8/9 (Memory Relevance Ranking & Context Quality) —
+        # DITAMBAHKAN ke card "Memory Decisions" yang SUDAH ADA (spec §13:
+        # "Do NOT create a Memory Ranking Dashboard"), bukan card baru.
+        # Angka murni dari `RetrievalOutcome`/`score_memory()`, TIDAK ADA
+        # "confidence"/"certainty" apa pun (spec §12 Telemetry Rules).
+        last_ranking = md.get("last_ranking")
+        if last_ranking:
+            lines.append("Memory Ranking (recall terakhir):")
+            lines.append(
+                f"  Candidates: {last_ranking['candidates']} | Ranked: {last_ranking['ranked']} | "
+                f"Selected: {last_ranking['selected']} | Duplicates Removed: {last_ranking['duplicates_removed']}"
+            )
+            lines.append(f"  Query Source: {last_ranking['query_source']} | Top Score: {last_ranking['top_score']}")
+            if last_ranking["top_match_preview"]:
+                lines.append(f"  Top Match: \"{last_ranking['top_match_preview']}\"")
         recent_recalls = md.get("recent_recalls") or []
         if recent_recalls:
             lines.append("Recent Recalls:")
@@ -456,7 +471,8 @@ class DeveloperDashboard(QDialog):
                 ref_tag = "reference" if r.get("reference_signal") else "-"
                 lines.append(
                     f"  \"{r['query_preview']}\" [{ref_tag}] source={r.get('query_source', 'current_message')} "
-                    f"-> {r['result_count']} memori"
+                    f"candidates={r.get('candidate_count', 0)} dup_removed={r.get('duplicates_removed', 0)} "
+                    f"top_score={r.get('top_score')} -> {r['result_count']} memori"
                 )
         self._set_card(self._memory_decisions_card, "\n".join(lines))
 
