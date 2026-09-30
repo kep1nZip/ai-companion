@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from google.genai import types
 
@@ -32,6 +33,11 @@ from ai.reference_signals import detect_reference_signal, extract_keywords, filt
 # (lihat docstring `ai/memory_ranking.py`), dipakai `_search_memories_by_
 # keywords()` untuk meranking kandidat SEBELUM dipangkas ke budget akhir.
 from ai.memory_ranking import rank_and_select, score_memory, RetrievalOutcome
+# v3.5 Phase 1/2/4/8 (Temporal Awareness & Task Continuity) — modul BARU,
+# pure/deterministic (lihat docstring `ai/temporal_signals.py`), TIDAK
+# menggantikan `ai/reference_signals.py` (v3.3) sama sekali — dua sistem
+# independen, dipakai bersamaan (spec §8 Phase 3).
+from ai.temporal_signals import detect_temporal_signals, format_memory_age, TemporalSignals
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder, categorize_continuity
 from database.memory_manager import MemoryManager, Memory
@@ -40,7 +46,7 @@ from behavior.behavior_state import BehaviorState, DEFAULT_BEHAVIOR_STATE
 from vision.vision import Vision
 from vision.vision_context import VisionContext
 from config.settings import GEMINI_API_KEY, CONVERSATION_HISTORY_MAX_MESSAGES
-from config.constants import MODEL_NAME, EPHEMERAL_CONTEXT_MEMORY_LIMIT, MEMORY_CANDIDATE_POOL_LIMIT
+from config.constants import MODEL_NAME, EPHEMERAL_CONTEXT_MEMORY_LIMIT, MEMORY_CANDIDATE_POOL_LIMIT, ROUTINE_TIMEZONE
 from config.logger import logger
 
 from routine.routine import Routine
@@ -78,10 +84,21 @@ class CompanionError(Exception):
     """Error umum lain dari Gemini API."""
 
 
-def _format_memories(memories: list[Memory]) -> str:
+def _format_memories(memories: list[Memory], now: Optional[datetime] = None) -> str:
     if not memories:
         return ""
-    lines = [f"- ({m.category}) {m.content}" for m in memories]
+    # v3.5 Phase 8 (Memory Freshness Awareness) — `now` OPSIONAL (default
+    # None = perilaku IDENTIK sebelum v3.5, backward-compat penuh untuk
+    # pemanggil lama). Kalau diisi, tiap baris memory dapat sufiks usia
+    # ringkas ("~2 jam lalu") lewat `format_memory_age()` (`ai/temporal_
+    # signals.py`) — MURNI tampilan, TIDAK mengubah `status`/urutan/isi
+    # memory apa pun (spec §13: "Old ≠ false"). `age` `None` (updated_at
+    # kosong/tidak valid) -> tidak ada sufiks sama sekali, bukan error.
+    lines = []
+    for m in memories:
+        age = format_memory_age(m.updated_at, now) if now is not None else None
+        suffix = f" (diperbarui {age})" if age else ""
+        lines.append(f"- ({m.category}) {m.content}{suffix}")
     return "Berikut hal-hal yang Arona ingat tentang Teacher:\n" + "\n".join(lines)
 
 
@@ -235,6 +252,11 @@ class Companion:
         # observability, cuma ini TIDAK di-log sebagai histori (terlalu
         # sering berubah untuk berguna sebagai riwayat).
         self._last_recall_scores: dict[int, float] = {}
+        # v3.5 Phase 11/15 — cache read-only murni untuk Developer
+        # Dashboard, pola IDENTIK `_last_recall_scores` di atas. `None`
+        # sebelum chat() pertama kali dipanggil (belum ada sinyal apa pun
+        # untuk di-cache).
+        self._last_temporal_signals: Optional[TemporalSignals] = None
         self._MEMORY_HISTORY_LIMIT = 30
         # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
         # dipakai (bukan re-deteksi dari type() nanti) — murni string
@@ -731,6 +753,49 @@ class Companion:
             "last_ranking": last_ranking,
         }
 
+    def get_temporal_debug_snapshot(self) -> dict:
+        """v3.5 Phase 15 (Developer Observability) — READ-ONLY, murni
+        membaca `_last_temporal_signals` (dicache `_build_contents()` di
+        atas) + `_recall_decision_history` yang SUDAH ADA (v3.2/v3.3/v3.4)
+        untuk field "Anchor" (reuse `top_match_preview`/`query_source` dari
+        recall TERAKHIR — TIDAK ADA pencarian/kalkulasi baru apa pun di
+        sini). TIDAK memicu apa pun, TIDAK menyimpulkan task_status/
+        deadline/priority (Hard Boundary spec §4.2/§4.3) — field yang
+        dikembalikan SEMUA cuma echo dari evidence yang sudah dihitung
+        `ai/temporal_signals.py` untuk pesan TERAKHIR.
+
+        Return dict dengan SEMUA field kosong/`None` kalau belum pernah
+        ada chat sama sekali (`_last_temporal_signals is None`) — Dashboard
+        menampilkan "Belum ada data" untuk kondisi ini, bukan error."""
+        signals = self._last_temporal_signals
+        recalls = self._recall_decision_history
+        last_recall = recalls[-1] if recalls else None
+
+        if signals is None:
+            return {
+                "relative_terms": (),
+                "normalized_dates": (),
+                "continuation_cues": (),
+                "completion_cues": (),
+                "unresolved_cues": (),
+                "anchor_preview": None,
+                "anchor_source": None,
+            }
+
+        return {
+            "relative_terms": signals.relative_terms,
+            "normalized_dates": signals.normalized_dates,
+            "continuation_cues": signals.continuation_cues,
+            "completion_cues": signals.completion_cues,
+            "unresolved_cues": signals.unresolved_cues,
+            # v3.5 Phase 5 (Conversation Anchor Reuse): "Anchor" di sini
+            # SEPENUHNYA reuse field yang SUDAH ADA dari v3.3/v3.4 recall
+            # TERAKHIR — BUKAN anchor/topic-tracking baru. `None` kalau
+            # belum pernah ada recall sama sekali.
+            "anchor_preview": last_recall.get("top_match_preview") if last_recall else None,
+            "anchor_source": last_recall.get("query_source") if last_recall else None,
+        }
+
     # ---------- Memory ----------
 
     def list_memories(self, limit: int = 50) -> list[Memory]:
@@ -967,12 +1032,27 @@ class Companion:
         history = self._conversation.get_history(max_messages=CONVERSATION_HISTORY_MAX_MESSAGES)
         contents: list[types.Content] = []
 
+        # v3.5 Phase 1/2/4/11 (Temporal Awareness & Task Continuity) —
+        # dihitung SEKALI di sini dari `user_input` (pesan Teacher yang
+        # SEDANG diproses turn ini) — BUKAN dari riwayat, BUKAN dari
+        # balasan Arona (spec §19: "Autonomous turns must not invent
+        # Teacher temporal facts", dan secara umum sinyal ini soal apa
+        # yang BARU SAJA Teacher katakan). `now` dari timezone project
+        # yang SUDAH ADA (`config.constants.ROUTINE_TIMEZONE`, dipakai
+        # Routine sejak awal) — TIDAK membuat sumber waktu baru.
+        # `self._last_temporal_signals` dicache murni untuk Developer
+        # Dashboard (`get_temporal_debug_snapshot()`, read-only, pola
+        # IDENTIK `_last_recall_scores`).
+        temporal_signals = detect_temporal_signals(user_input, now=datetime.now(ZoneInfo(ROUTINE_TIMEZONE)))
+        self._last_temporal_signals = temporal_signals
+
         try:
             ephemeral_text = self._context_builder.build(
                 behavior_state,
                 vision_context=vision_context,
                 routine_event=routine_event,
                 decision_result=decision_result,
+                temporal_signals=temporal_signals,
             )
             contents.append(
                 types.Content(
@@ -1000,7 +1080,7 @@ class Companion:
             memories = self._timed(
                 "memory_query", lambda: self._select_relevant_memories(user_input, vision_context)
             )
-            memory_text = _format_memories(memories)
+            memory_text = _format_memories(memories, now=datetime.now(timezone.utc))
             if memory_text:
                 contents.append(
                     types.Content(
@@ -1589,7 +1669,7 @@ class Companion:
             # membawa memory soal Game X juga, bukan memory acak yang baru
             # diubah. Bonus: otomatis ikut ter-filter marker (sebelumnya tidak).
             memories = self._timed("memory_query", lambda: self._relevant_memories_for_autonomous(vision_context))
-            memory_text = _format_memories(memories)
+            memory_text = _format_memories(memories, now=datetime.now(timezone.utc))
         except Exception as e:
             logger.warning("Gagal memuat memori (autonomous), lanjut tanpa memori: {}", e)
             memory_text = ""

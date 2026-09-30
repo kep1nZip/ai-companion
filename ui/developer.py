@@ -474,6 +474,27 @@ class DeveloperDashboard(QDialog):
                     f"candidates={r.get('candidate_count', 0)} dup_removed={r.get('duplicates_removed', 0)} "
                     f"top_score={r.get('top_score')} -> {r['result_count']} memori"
                 )
+        # v3.5 Phase 15 (Temporal Awareness & Task Continuity) — DITAMBAHKAN
+        # ke card "Memory Decisions" yang SUDAH ADA (spec §17: "Do NOT
+        # create a separate Temporal Dashboard"), bukan card baru. Murni
+        # echo evidence deterministik, TIDAK ADA "Task Status"/deadline/
+        # priority (Hard Boundary §4.2/§4.3 — tidak ada yang disimpulkan).
+        td = snapshot.temporal_debug
+        if td and any([
+            td.get("relative_terms"), td.get("normalized_dates"), td.get("continuation_cues"),
+            td.get("completion_cues"), td.get("unresolved_cues"),
+        ]):
+            lines.append("Temporal Context (pesan terakhir):")
+            if td.get("relative_terms"):
+                lines.append(f"  Rujukan waktu relatif: {', '.join(td['relative_terms'])}")
+            if td.get("normalized_dates"):
+                lines.append(f"  Tanggal: {', '.join(td['normalized_dates'])}")
+            if td.get("continuation_cues"):
+                lines.append(f"  Sinyal kelanjutan: {', '.join(td['continuation_cues'])}")
+            if td.get("completion_cues"):
+                lines.append(f"  Sinyal penyelesaian: {', '.join(td['completion_cues'])}")
+            if td.get("unresolved_cues"):
+                lines.append(f"  Sinyal belum tuntas: {', '.join(td['unresolved_cues'])}")
         self._set_card(self._memory_decisions_card, "\n".join(lines))
 
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:

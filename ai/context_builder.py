@@ -11,6 +11,8 @@ from routine.routine_event import RoutineEvent
 
 from initiative.initiative_decision import DecisionResult
 
+from ai.temporal_signals import TemporalSignals
+
 _HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN = [
     "Januari", "Februari", "Maret", "April", "Mei", "Juni",
@@ -89,6 +91,7 @@ class ContextBuilder:
         vision_context: Optional[VisionContext] = None,
         routine_event: Optional[RoutineEvent] = None,
         decision_result: Optional[DecisionResult] = None,
+        temporal_signals: Optional[TemporalSignals] = None,
     ) -> str:
         sections = [
             self._format_time(),
@@ -97,6 +100,23 @@ class ContextBuilder:
             self._format_relationship(behavior_state),
             self._format_internal(behavior_state),
         ]
+
+        # v3.5 Phase 10/11 (Temporal Awareness & Task Continuity) —
+        # `ContextBuilder` TETAP assembly-only (spec §15: "ContextBuilder
+        # remains assembly-only"): deteksi sinyal SUDAH dilakukan Companion
+        # lewat `ai/temporal_signals.py::detect_temporal_signals()` SEBELUM
+        # `build()` dipanggil (pola IDENTIK `vision_context`/`routine_event`/
+        # `decision_result` — semua dihitung Companion, method ini cuma
+        # merangkai teks). Section HANYA muncul kalau ADA sinyal terdeteksi
+        # (`temporal_signals.is_empty()` False) — spec §15 "optional",
+        # jangan menambah noise section kosong untuk pesan yang memang
+        # tidak mengandung sinyal waktu/kontinuitas apa pun. Diletakkan
+        # SETELAH `_format_continuity` (v3.1) — keduanya sama-sama soal
+        # waktu/kesinambungan, wajar bersebelahan; TIDAK mengubah urutan
+        # section lain yang sudah ada (spec §16: "Do not rearrange the
+        # whole context pipeline").
+        if temporal_signals is not None and not temporal_signals.is_empty():
+            sections.append(self._format_temporal(temporal_signals))
 
         if vision_context is not None:
             sections.append(self._format_vision(vision_context))
@@ -167,6 +187,28 @@ class ContextBuilder:
             f"Curiosity: {i.curiosity.level}\n"
             f"Initiative: {i.initiative.level}"
         )
+
+    def _format_temporal(self, signals: TemporalSignals) -> str:
+        """v3.5 Phase 10 — section BARU, FAKTUAL & KOMPAK (spec §15: "must
+        be factual, compact, provider-agnostic, optional, free of
+        imperative instructions"). Setiap baris HANYA muncul kalau field
+        terkait tidak kosong — TIDAK PERNAH menulis "Task Status: ACTIVE"
+        atau kalimat perintah seperti "Arona should continue the task"
+        (Hard Boundary spec §4.2/§4.3/§15 eksplisit melarang ini). Label
+        "Sinyal ..." dipilih SENGAJA (bukan "Status") — supaya jelas ini
+        OBSERVASI leksikal, bukan kesimpulan."""
+        lines = ["Temporal Context"]
+        if signals.relative_terms:
+            lines.append(f"Rujukan waktu relatif: {', '.join(signals.relative_terms)}")
+        if signals.normalized_dates:
+            lines.append(f"Tanggal (dihitung dari kalender): {', '.join(signals.normalized_dates)}")
+        if signals.continuation_cues:
+            lines.append(f"Sinyal kelanjutan aktivitas: {', '.join(signals.continuation_cues)}")
+        if signals.completion_cues:
+            lines.append(f"Sinyal penyelesaian: {', '.join(signals.completion_cues)}")
+        if signals.unresolved_cues:
+            lines.append(f"Sinyal belum tuntas: {', '.join(signals.unresolved_cues)}")
+        return "\n".join(lines)
 
     def _format_vision(self, vc: VisionContext) -> str:
         app_line = f"Active Application: {vc.application}\n" if vc.application else ""

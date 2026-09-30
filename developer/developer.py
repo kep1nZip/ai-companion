@@ -67,6 +67,9 @@ class DeveloperSnapshot:
     # v3.2 Phase 6+7 — pola IDENTIK personalization_debug (Optional[dict]
     # generik).
     memory_decision_debug: Optional[dict]
+    # v3.5 Phase 15 — pola IDENTIK memory_decision_debug (Optional[dict]
+    # generik, reuse struktur observability yang sudah ada).
+    temporal_debug: Optional[dict]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -236,6 +239,16 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil memory decision debug snapshot: {}", e)
             return None
 
+    def get_temporal_debug(self) -> Optional[dict]:
+        """v3.5 Phase 15: read-only passthrough ke
+        Companion.get_temporal_debug_snapshot(). Pola try/except IDENTIK
+        getter lain di file ini."""
+        try:
+            return self._companion.get_temporal_debug_snapshot()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil temporal debug snapshot: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -289,6 +302,7 @@ class DeveloperService:
             context_debug=self.get_context_debug(),
             personalization_debug=self.get_personalization_debug(),
             memory_decision_debug=self.get_memory_decision_debug(),
+            temporal_debug=self.get_temporal_debug(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -411,6 +425,34 @@ class DeveloperService:
                     f"candidates={r.get('candidate_count', 0)} dup_removed={r.get('duplicates_removed', 0)} "
                     f"top_score={r.get('top_score')} -> {r['result_count']} memori"
                 )
+
+        # v3.5 Phase 15 (Temporal Awareness & Task Continuity) — DITAMBAHKAN
+        # ke bawah "Memory Decisions" yang sudah ada (spec §17: "Reuse the
+        # existing Developer Dashboard structures... Do NOT create a
+        # separate Temporal Dashboard"), bukan section terpisah. SEMUA
+        # field murni echo evidence deterministik dari `ai/temporal_
+        # signals.py` — TIDAK ADA "Task Status"/deadline/priority yang
+        # ditampilkan di sini (Hard Boundary §4.2/§4.3 — tidak ada yang
+        # disimpulkan aplikasi untuk ditampilkan, karena memang tidak ada
+        # yang dihitung).
+        td = s.temporal_debug
+        if td and any([
+            td.get("relative_terms"), td.get("normalized_dates"), td.get("continuation_cues"),
+            td.get("completion_cues"), td.get("unresolved_cues"),
+        ]):
+            lines += ["", "## Temporal Context (pesan terakhir)"]
+            if td.get("relative_terms"):
+                lines.append(f"- Rujukan waktu relatif: {', '.join(td['relative_terms'])}")
+            if td.get("normalized_dates"):
+                lines.append(f"- Tanggal (dihitung dari kalender): {', '.join(td['normalized_dates'])}")
+            if td.get("continuation_cues"):
+                lines.append(f"- Sinyal kelanjutan aktivitas: {', '.join(td['continuation_cues'])}")
+            if td.get("completion_cues"):
+                lines.append(f"- Sinyal penyelesaian: {', '.join(td['completion_cues'])}")
+            if td.get("unresolved_cues"):
+                lines.append(f"- Sinyal belum tuntas: {', '.join(td['unresolved_cues'])}")
+            if td.get("anchor_preview"):
+                lines.append(f"- Anchor (reuse recall v3.3/v3.4): \"{td['anchor_preview']}\" (source={td.get('anchor_source')})")
 
         for title, obj in [
             ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),
