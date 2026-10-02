@@ -38,6 +38,12 @@ from ai.memory_ranking import rank_and_select, score_memory, RetrievalOutcome
 # menggantikan `ai/reference_signals.py` (v3.3) sama sekali — dua sistem
 # independen, dipakai bersamaan (spec §8 Phase 3).
 from ai.temporal_signals import detect_temporal_signals, format_memory_age, TemporalSignals
+# v3.6 Phase 1/2/8 (Adaptive Response Calibration) — modul BARU, pure/
+# deterministic (lihat docstring `ai/response_calibration.py`). REUSE
+# `detect_reference_signal` (v3.3, sudah diimpor di atas) dan
+# `temporal_signals.unresolved_cues`/`completion_cues` (v3.5, dihitung
+# SEKALI di `_build_contents`) — TIDAK ADA logic yang dihitung dua kali.
+from ai.response_calibration import build_response_calibration, ResponseCalibration
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder, categorize_continuity
 from database.memory_manager import MemoryManager, Memory
@@ -257,6 +263,9 @@ class Companion:
         # sebelum chat() pertama kali dipanggil (belum ada sinyal apa pun
         # untuk di-cache).
         self._last_temporal_signals: Optional[TemporalSignals] = None
+        # v3.6 Phase 14 — cache read-only murni untuk Developer Dashboard,
+        # pola IDENTIK `_last_temporal_signals` di atas.
+        self._last_response_calibration: Optional[ResponseCalibration] = None
         self._MEMORY_HISTORY_LIMIT = 30
         # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
         # dipakai (bukan re-deteksi dari type() nanti) — murni string
@@ -796,6 +805,33 @@ class Companion:
             "anchor_source": last_recall.get("query_source") if last_recall else None,
         }
 
+    def get_response_calibration_debug_snapshot(self) -> dict:
+        """v3.6 Phase 14 (Developer Observability) — READ-ONLY, murni
+        membaca `_last_response_calibration` (dicache `_build_contents()`
+        di atas). TIDAK memicu apa pun, TIDAK menampilkan confidence/skor
+        buatan apa pun (Hard Boundary spec §19/§24) — SEMUA field murni
+        echo evidence deterministik untuk pesan TERAKHIR.
+
+        Return dict dengan field kosong/`None` kalau belum pernah ada chat
+        sama sekali — Dashboard menampilkan "Belum ada data" untuk kondisi
+        ini, bukan error."""
+        calibration = self._last_response_calibration
+        if calibration is None:
+            return {
+                "conversation_form": None,
+                "depth_cues": (),
+                "explicit_phrases": (),
+                "step_by_step_requested": False,
+                "conflicting_cues": False,
+            }
+        return {
+            "conversation_form": calibration.conversation_form,
+            "depth_cues": calibration.depth_cues,
+            "explicit_phrases": calibration.explicit_phrases,
+            "step_by_step_requested": calibration.step_by_step_requested,
+            "conflicting_cues": calibration.conflicting_cues,
+        }
+
     # ---------- Memory ----------
 
     def list_memories(self, limit: int = 50) -> list[Memory]:
@@ -1046,6 +1082,23 @@ class Companion:
         temporal_signals = detect_temporal_signals(user_input, now=datetime.now(ZoneInfo(ROUTINE_TIMEZONE)))
         self._last_temporal_signals = temporal_signals
 
+        # v3.6 Phase 1/2/8/11 (Adaptive Response Calibration) — dihitung
+        # SEKALI di sini, SETELAH `temporal_signals` (supaya
+        # `unresolved_cues`/`completion_cues`-nya bisa DI-REUSE LANGSUNG
+        # untuk form detection, spec §16: "v3.6 must coexist with v3.3/
+        # v3.5... All evidence coexists"). `detect_reference_signal()`
+        # SUDAH diimpor sejak v3.3 — dipanggil ulang di sini (regex murni,
+        # murah) BUKAN diambil dari `_select_relevant_memories()` (yang
+        # baru dipanggil belakangan di bawah) supaya `_build_contents()`
+        # tidak perlu bergantung pada urutan eksekusi method lain.
+        response_calibration = build_response_calibration(
+            user_input,
+            reference_signal=detect_reference_signal(user_input),
+            unresolved_cues=temporal_signals.unresolved_cues,
+            completion_cues=temporal_signals.completion_cues,
+        )
+        self._last_response_calibration = response_calibration
+
         try:
             ephemeral_text = self._context_builder.build(
                 behavior_state,
@@ -1053,6 +1106,7 @@ class Companion:
                 routine_event=routine_event,
                 decision_result=decision_result,
                 temporal_signals=temporal_signals,
+                response_calibration=response_calibration,
             )
             contents.append(
                 types.Content(

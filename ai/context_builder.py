@@ -12,6 +12,7 @@ from routine.routine_event import RoutineEvent
 from initiative.initiative_decision import DecisionResult
 
 from ai.temporal_signals import TemporalSignals
+from ai.response_calibration import ResponseCalibration
 
 _HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN = [
@@ -92,6 +93,7 @@ class ContextBuilder:
         routine_event: Optional[RoutineEvent] = None,
         decision_result: Optional[DecisionResult] = None,
         temporal_signals: Optional[TemporalSignals] = None,
+        response_calibration: Optional[ResponseCalibration] = None,
     ) -> str:
         sections = [
             self._format_time(),
@@ -117,6 +119,20 @@ class ContextBuilder:
         # whole context pipeline").
         if temporal_signals is not None and not temporal_signals.is_empty():
             sections.append(self._format_temporal(temporal_signals))
+
+        # v3.6 Phase 8 (ContextBuilder Integration) — pola IDENTIK
+        # `temporal_signals` di atas: deteksi SUDAH dilakukan Companion
+        # SEBELUM `build()` dipanggil (`ai/response_calibration.py::
+        # build_response_calibration()`), method ini TETAP assembly-only.
+        # Section HANYA muncul kalau ADA evidence (`is_empty()` False) —
+        # spec §13: "section should only appear when useful evidence
+        # exists." Diletakkan SETELAH Temporal Context — keduanya SAMA-
+        # SAMA evidence per-pesan-saat-ini (bukan state behavior jangka
+        # panjang seperti Emotion/Relationship di atas), wajar
+        # bersebelahan; urutan section LAIN tidak diubah (spec §25: tidak
+        # merombak pipeline context yang sudah ada).
+        if response_calibration is not None and not response_calibration.is_empty():
+            sections.append(self._format_response_calibration(response_calibration))
 
         if vision_context is not None:
             sections.append(self._format_vision(vision_context))
@@ -208,6 +224,30 @@ class ContextBuilder:
             lines.append(f"Sinyal penyelesaian: {', '.join(signals.completion_cues)}")
         if signals.unresolved_cues:
             lines.append(f"Sinyal belum tuntas: {', '.join(signals.unresolved_cues)}")
+        return "\n".join(lines)
+
+    def _format_response_calibration(self, calibration: ResponseCalibration) -> str:
+        """v3.6 Phase 8/9 — section BARU, FAKTUAL & KOMPAK (spec §13/§14:
+        "must be factual, compact... Avoid rigid commands such as 'Arona
+        MUST answer in exactly 3 sentences'"). Wording dipilih bentuk
+        OBSERVASI ("Teacher explicitly asked for..."), BUKAN perintah
+        ("You must...") — spec §14 contoh eksplisit. `explicit_phrases`
+        ditulis VERBATIM (bukan cuma label kategori) — konkret > abstrak,
+        pelajaran dari hotfix v3.3 round 2 untuk model yang lebih lemah.
+        TIDAK PERNAH menulis angka confidence/skor apa pun (Hard Boundary
+        spec §19/§24)."""
+        lines = ["Response Calibration"]
+        if calibration.conversation_form:
+            form_label = calibration.conversation_form.replace("_", " ")
+            lines.append(f"Bentuk pesan Teacher saat ini tampak seperti: {form_label}.")
+        if calibration.explicit_phrases:
+            phrases = ", ".join(f'"{p}"' for p in calibration.explicit_phrases)
+            lines.append(f"Teacher menyebutkan instruksi gaya jawaban secara eksplisit: {phrases}.")
+        if calibration.conflicting_cues:
+            lines.append(
+                "Catatan: instruksi gaya jawaban di atas tampak saling bertentangan "
+                "(diminta detail sekaligus singkat) — gunakan pertimbangan wajar."
+            )
         return "\n".join(lines)
 
     def _format_vision(self, vc: VisionContext) -> str:

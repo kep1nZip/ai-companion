@@ -70,6 +70,8 @@ class DeveloperSnapshot:
     # v3.5 Phase 15 — pola IDENTIK memory_decision_debug (Optional[dict]
     # generik, reuse struktur observability yang sudah ada).
     temporal_debug: Optional[dict]
+    # v3.6 Phase 14 — pola IDENTIK temporal_debug.
+    response_calibration_debug: Optional[dict]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -249,6 +251,16 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil temporal debug snapshot: {}", e)
             return None
 
+    def get_response_calibration_debug(self) -> Optional[dict]:
+        """v3.6 Phase 14: read-only passthrough ke
+        Companion.get_response_calibration_debug_snapshot(). Pola
+        try/except IDENTIK getter lain di file ini."""
+        try:
+            return self._companion.get_response_calibration_debug_snapshot()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil response calibration debug snapshot: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -303,6 +315,7 @@ class DeveloperService:
             personalization_debug=self.get_personalization_debug(),
             memory_decision_debug=self.get_memory_decision_debug(),
             temporal_debug=self.get_temporal_debug(),
+            response_calibration_debug=self.get_response_calibration_debug(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -453,6 +466,23 @@ class DeveloperService:
                 lines.append(f"- Sinyal belum tuntas: {', '.join(td['unresolved_cues'])}")
             if td.get("anchor_preview"):
                 lines.append(f"- Anchor (reuse recall v3.3/v3.4): \"{td['anchor_preview']}\" (source={td.get('anchor_source')})")
+
+        # v3.6 Phase 14 (Adaptive Response Calibration) — DITAMBAHKAN ke
+        # bawah "Memory Decisions" yang sudah ada (spec §19: "Do NOT
+        # create: Response Calibration Dashboard"), bukan section terpisah.
+        # Murni echo evidence deterministik — TIDAK ADA confidence/skor
+        # buatan apa pun (Hard Boundary §19/§24).
+        rc = s.response_calibration_debug
+        if rc and (rc.get("conversation_form") or rc.get("depth_cues") or rc.get("explicit_phrases")):
+            lines += ["", "## Response Calibration (pesan terakhir)"]
+            if rc.get("conversation_form"):
+                lines.append(f"- Form: {rc['conversation_form']}")
+            if rc.get("depth_cues"):
+                lines.append(f"- Depth Cue: {', '.join(rc['depth_cues'])}")
+            if rc.get("explicit_phrases"):
+                lines.append(f"- Explicit Cue: {', '.join(f'\"{p}\"' for p in rc['explicit_phrases'])}")
+            lines.append(f"- Step-by-step: {rc.get('step_by_step_requested', False)}")
+            lines.append(f"- Conflicting Cue: {rc.get('conflicting_cues', False)}")
 
         for title, obj in [
             ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),

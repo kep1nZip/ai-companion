@@ -495,6 +495,21 @@ class DeveloperDashboard(QDialog):
                 lines.append(f"  Sinyal penyelesaian: {', '.join(td['completion_cues'])}")
             if td.get("unresolved_cues"):
                 lines.append(f"  Sinyal belum tuntas: {', '.join(td['unresolved_cues'])}")
+        # v3.6 Phase 14 (Adaptive Response Calibration) — DITAMBAHKAN ke
+        # card "Memory Decisions" yang SUDAH ADA (spec §19: "Do NOT create
+        # a Response Calibration Dashboard"), bukan card baru. Murni echo
+        # evidence deterministik, TIDAK ADA confidence/skor buatan apa pun.
+        rc = snapshot.response_calibration_debug
+        if rc and (rc.get("conversation_form") or rc.get("depth_cues") or rc.get("explicit_phrases")):
+            lines.append("Response Calibration (pesan terakhir):")
+            if rc.get("conversation_form"):
+                lines.append(f"  Form: {rc['conversation_form']}")
+            if rc.get("depth_cues"):
+                lines.append(f"  Depth Cue: {', '.join(rc['depth_cues'])}")
+            if rc.get("explicit_phrases"):
+                lines.append(f"  Explicit Cue: {', '.join(f'\"{p}\"' for p in rc['explicit_phrases'])}")
+            lines.append(f"  Step-by-step: {rc.get('step_by_step_requested', False)}")
+            lines.append(f"  Conflicting Cue: {rc.get('conflicting_cues', False)}")
         self._set_card(self._memory_decisions_card, "\n".join(lines))
 
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:
