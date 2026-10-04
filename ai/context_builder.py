@@ -13,6 +13,7 @@ from initiative.initiative_decision import DecisionResult
 
 from ai.temporal_signals import TemporalSignals
 from ai.response_calibration import ResponseCalibration
+from ai.conversation_feedback import ConversationFeedback
 
 _HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 _BULAN = [
@@ -224,6 +225,60 @@ class ContextBuilder:
             lines.append(f"Sinyal penyelesaian: {', '.join(signals.completion_cues)}")
         if signals.unresolved_cues:
             lines.append(f"Sinyal belum tuntas: {', '.join(signals.unresolved_cues)}")
+        return "\n".join(lines)
+
+    def build_feedback_section(self, feedback: ConversationFeedback) -> str:
+        """v3.7 Phase 10/11/15 — BEDA dari section lain (`_format_temporal`/
+        `_format_response_calibration`, dipanggil dari dalam `build()` dan
+        selalu muncul di AWAL ephemeral block) — method PUBLIK TERPISAH,
+        SENGAJA, supaya `Companion._build_contents()` bisa menaruh hasilnya
+        di PALING AKHIR `contents` (setelah riwayat, dekat titik generasi),
+        bukan di awal. Spec §16 eksplisit: "Concrete situational evidence
+        should remain close to the generation point, following the same
+        architectural lesson used by earlier milestones" — merujuk pola
+        yang SAMA dengan reinforcement note hotfix v3.3 (`_build_contents`,
+        bukan lewat `ContextBuilder` sama sekali) dan `autonomous_note` di
+        `_build_autonomous_contents`.
+
+        `ContextBuilder` TETAP satu-satunya yang merangkai teks (prinsip
+        "assembly-only" tidak dilanggar — Companion CUMA memutuskan DI MANA
+        menaruh potongan teks ini di `contents`, bukan APA ISINYA). Return
+        string kosong `""` kalau `feedback.is_empty()` True — pemanggil
+        HARUS cek ini sebelum menambahkan `Content` baru (spec §15: jangan
+        menambah blok metadata kosong)."""
+        if feedback.is_empty():
+            return ""
+        return self._format_conversation_feedback(feedback)
+
+    def _format_conversation_feedback(self, feedback: ConversationFeedback) -> str:
+        """v3.7 Phase 10 — FAKTUAL & KOMPAK (spec §18 Telemetry Rules:
+        "Good: Correction detected: true. Bad: Arona was wrong: true").
+        Wording OBSERVASIONAL ("Teacher indicates...", "Teacher asks
+        for..."), BUKAN kesimpulan kualitas jawaban Arona sendiri. Setiap
+        baris independen & HANYA muncul kalau kategori terkait benar-benar
+        terdeteksi — TIDAK PERNAH menulis "Arona's previous answer was
+        wrong/bad" (Hard Boundary §4.2)."""
+        lines = ["Conversation Feedback"]
+        label_map = {
+            "confusion": "Teacher tampak belum memahami balasan sebelumnya.",
+            "correction": "Teacher menunjukkan interpretasi sebelumnya bukan yang dimaksud.",
+            "negative_length_feedback": "Teacher menilai balasan sebelumnya terlalu panjang.",
+            "negative_complexity_feedback": "Teacher menilai balasan sebelumnya terlalu rumit/teknis.",
+            "repeat_request": "Teacher meminta pengulangan/penjelasan ulang.",
+            "simplification_request": "Teacher meminta penjelasan yang lebih sederhana.",
+            "expansion_request": "Teacher meminta penjelasan yang lebih lengkap/mendalam.",
+            "positive_acknowledgement": "Teacher mengonfirmasi sudah paham.",
+            "closure": "Teacher tampak ingin menutup topik ini.",
+        }
+        for cue in feedback.feedback_cues:
+            label = label_map.get(cue)
+            if label:
+                lines.append(f"- {label}")
+        if feedback.explicit_phrases:
+            phrases = ", ".join(f'"{p}"' for p in feedback.explicit_phrases)
+            lines.append(f"- Frasa eksplisit Teacher: {phrases}.")
+        if feedback.conflicting_feedback:
+            lines.append("- Catatan: sinyal feedback di atas tampak saling bertentangan — gunakan pertimbangan wajar.")
         return "\n".join(lines)
 
     def _format_response_calibration(self, calibration: ResponseCalibration) -> str:

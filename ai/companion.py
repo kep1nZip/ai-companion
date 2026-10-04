@@ -44,6 +44,9 @@ from ai.temporal_signals import detect_temporal_signals, format_memory_age, Temp
 # `temporal_signals.unresolved_cues`/`completion_cues` (v3.5, dihitung
 # SEKALI di `_build_contents`) — TIDAK ADA logic yang dihitung dua kali.
 from ai.response_calibration import build_response_calibration, ResponseCalibration
+# v3.7 Phase 1/10/11 (Conversational Feedback & Repair) — modul BARU,
+# pure/deterministic (lihat docstring `ai/conversation_feedback.py`).
+from ai.conversation_feedback import build_conversation_feedback, ConversationFeedback
 from ai.memory_worker import MemoryExtractionWorker, MemoryWorkerStatus
 from ai.context_builder import ContextBuilder, categorize_continuity
 from database.memory_manager import MemoryManager, Memory
@@ -266,6 +269,9 @@ class Companion:
         # v3.6 Phase 14 — cache read-only murni untuk Developer Dashboard,
         # pola IDENTIK `_last_temporal_signals` di atas.
         self._last_response_calibration: Optional[ResponseCalibration] = None
+        # v3.7 Phase 18 — cache read-only murni untuk Developer Dashboard,
+        # pola IDENTIK `_last_response_calibration` di atas.
+        self._last_conversation_feedback: Optional[ConversationFeedback] = None
         self._MEMORY_HISTORY_LIMIT = 30
         # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
         # dipakai (bukan re-deteksi dari type() nanti) — murni string
@@ -832,6 +838,32 @@ class Companion:
             "conflicting_cues": calibration.conflicting_cues,
         }
 
+    def get_conversation_feedback_debug_snapshot(self) -> dict:
+        """v3.7 Phase 18 (Developer Observability) — READ-ONLY, murni
+        membaca `_last_conversation_feedback` (dicache `_build_contents()`
+        di atas). TIDAK memicu apa pun, TIDAK menampilkan
+        "Arona was wrong"/skor buatan apa pun (Hard Boundary spec
+        §4.2/§23) — SEMUA field murni echo evidence deterministik untuk
+        pesan TERAKHIR."""
+        feedback = self._last_conversation_feedback
+        if feedback is None:
+            return {
+                "feedback_cues": (),
+                "explicit_phrases": (),
+                "correction_detected": False,
+                "repeat_requested": False,
+                "closure_detected": False,
+                "conflicting_feedback": False,
+            }
+        return {
+            "feedback_cues": feedback.feedback_cues,
+            "explicit_phrases": feedback.explicit_phrases,
+            "correction_detected": feedback.correction_detected,
+            "repeat_requested": feedback.repeat_requested,
+            "closure_detected": feedback.closure_detected,
+            "conflicting_feedback": feedback.conflicting_feedback,
+        }
+
     # ---------- Memory ----------
 
     def list_memories(self, limit: int = 50) -> list[Memory]:
@@ -1249,6 +1281,22 @@ class Companion:
                     "lalu lanjutkan dengan percaya diri."
                 )
             contents.append(types.Content(role="user", parts=[types.Part(text=note_text)]))
+
+        # v3.7 Phase 1/10/11 (Conversational Feedback & Repair) — dihitung
+        # dari `user_input` (pesan Teacher yang SEDANG diproses turn ini),
+        # TIDAK dari balasan Arona sebelumnya (modul ini cuma membaca APA
+        # YANG TEACHER KATAKAN, bukan menilai balasan Arona sendiri — Hard
+        # Boundary §4.1/§4.2). Ditaruh PALING AKHIR `contents` (lewat
+        # `ContextBuilder.build_feedback_section()`, method TERPISAH dari
+        # `build()` utama) — spec §16: "evidence should remain close to
+        # the generation point", pola IDENTIK reinforcement note v3.3 di
+        # atas & `autonomous_note` di `_build_autonomous_contents`.
+        conversation_feedback = build_conversation_feedback(user_input)
+        self._last_conversation_feedback = conversation_feedback
+        if not conversation_feedback.is_empty():
+            feedback_text = self._context_builder.build_feedback_section(conversation_feedback)
+            if feedback_text:
+                contents.append(types.Content(role="user", parts=[types.Part(text=feedback_text)]))
 
         logger.info("Ephemeral Context Injected")
         if self._performance is not None:

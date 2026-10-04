@@ -510,6 +510,21 @@ class DeveloperDashboard(QDialog):
                 lines.append(f"  Explicit Cue: {', '.join(f'\"{p}\"' for p in rc['explicit_phrases'])}")
             lines.append(f"  Step-by-step: {rc.get('step_by_step_requested', False)}")
             lines.append(f"  Conflicting Cue: {rc.get('conflicting_cues', False)}")
+        # v3.7 Phase 18 (Conversational Feedback & Repair) — DITAMBAHKAN ke
+        # card "Memory Decisions" yang SUDAH ADA (spec §23: "Do NOT create
+        # a new dashboard"), bukan card baru. Murni echo evidence
+        # deterministik, TIDAK ADA "Arona was wrong"/skor buatan apa pun.
+        cf = snapshot.conversation_feedback_debug
+        if cf and (cf.get("feedback_cues") or cf.get("explicit_phrases")):
+            lines.append("Conversation Feedback (pesan terakhir):")
+            if cf.get("feedback_cues"):
+                lines.append(f"  Feedback Cues: {', '.join(cf['feedback_cues'])}")
+            if cf.get("explicit_phrases"):
+                lines.append(f"  Explicit Phrases: {', '.join(f'\"{p}\"' for p in cf['explicit_phrases'])}")
+            lines.append(f"  Correction: {cf.get('correction_detected', False)}")
+            lines.append(f"  Repeat Requested: {cf.get('repeat_requested', False)}")
+            lines.append(f"  Closure: {cf.get('closure_detected', False)}")
+            lines.append(f"  Conflicting Feedback: {cf.get('conflicting_feedback', False)}")
         self._set_card(self._memory_decisions_card, "\n".join(lines))
 
     def _render_behavior(self, snapshot: DeveloperSnapshot) -> None:

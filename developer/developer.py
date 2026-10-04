@@ -72,6 +72,8 @@ class DeveloperSnapshot:
     temporal_debug: Optional[dict]
     # v3.6 Phase 14 — pola IDENTIK temporal_debug.
     response_calibration_debug: Optional[dict]
+    # v3.7 Phase 18 — pola IDENTIK response_calibration_debug.
+    conversation_feedback_debug: Optional[dict]
     avatar: AvatarSnapshot
     performance: dict
     health: HealthStatus
@@ -261,6 +263,16 @@ class DeveloperService:
             logger.warning("Developer: gagal ambil response calibration debug snapshot: {}", e)
             return None
 
+    def get_conversation_feedback_debug(self) -> Optional[dict]:
+        """v3.7 Phase 18: read-only passthrough ke
+        Companion.get_conversation_feedback_debug_snapshot(). Pola
+        try/except IDENTIK getter lain di file ini."""
+        try:
+            return self._companion.get_conversation_feedback_debug_snapshot()
+        except Exception as e:
+            logger.warning("Developer: gagal ambil conversation feedback debug snapshot: {}", e)
+            return None
+
     def get_avatar(self) -> AvatarSnapshot:
         try:
             return build_avatar_snapshot(self._avatar_manager, self._voice_manager)
@@ -316,6 +328,7 @@ class DeveloperService:
             memory_decision_debug=self.get_memory_decision_debug(),
             temporal_debug=self.get_temporal_debug(),
             response_calibration_debug=self.get_response_calibration_debug(),
+            conversation_feedback_debug=self.get_conversation_feedback_debug(),
             avatar=self.get_avatar(),
             performance=self.get_performance(),
             health=self.get_health(),
@@ -483,6 +496,23 @@ class DeveloperService:
                 lines.append(f"- Explicit Cue: {', '.join(f'\"{p}\"' for p in rc['explicit_phrases'])}")
             lines.append(f"- Step-by-step: {rc.get('step_by_step_requested', False)}")
             lines.append(f"- Conflicting Cue: {rc.get('conflicting_cues', False)}")
+
+        # v3.7 Phase 18 (Conversational Feedback & Repair) — DITAMBAHKAN ke
+        # bawah "Memory Decisions" yang sudah ada (spec §23: "Do NOT create
+        # a new dashboard"), bukan section terpisah. Murni echo evidence
+        # deterministik — TIDAK ADA "Arona was wrong"/skor buatan apa pun
+        # (Hard Boundary §4.2/§23).
+        cf = s.conversation_feedback_debug
+        if cf and (cf.get("feedback_cues") or cf.get("explicit_phrases")):
+            lines += ["", "## Conversation Feedback (pesan terakhir)"]
+            if cf.get("feedback_cues"):
+                lines.append(f"- Feedback Cues: {', '.join(cf['feedback_cues'])}")
+            if cf.get("explicit_phrases"):
+                lines.append(f"- Explicit Phrases: {', '.join(f'\"{p}\"' for p in cf['explicit_phrases'])}")
+            lines.append(f"- Correction: {cf.get('correction_detected', False)}")
+            lines.append(f"- Repeat Requested: {cf.get('repeat_requested', False)}")
+            lines.append(f"- Closure: {cf.get('closure_detected', False)}")
+            lines.append(f"- Conflicting Feedback: {cf.get('conflicting_feedback', False)}")
 
         for title, obj in [
             ("Behavior", s.behavior), ("Vision", s.vision), ("Routine", s.routine),
