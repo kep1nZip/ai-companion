@@ -38,7 +38,23 @@ class InitiativeEngine:
         is_actively_typing: bool = False,
         relevant_memory_count: int = 0,
         conversation_closed: bool = False,
+        idle_category: Optional[str] = None,
+        recent_unresolved: bool = False,
+        recent_correction: bool = False,
+        conversation_memory_count: int = 0,
+        anchor_present: bool = False,
     ) -> DecisionResult:
+        """v3.8 Phase 1/2 — 5 parameter BARU di akhir, SEMUA opsional dengan
+        default backward-compat (pemanggil lama tanpa v3.8 TIDAK PERLU
+        diubah). `idle_category` MURNI informasional untuk observability
+        (lihat `DecisionContext.anchor_present` docstring — pola IDENTIK
+        field `hour` yang sudah ada sejak awal dan tidak dikonsumsi rule
+        apa pun) — scoring idle TETAP berbasis `idle_seconds` detik seperti
+        sebelumnya (`IdleRule`/`RecentInteractionPenaltyRule`/
+        `ReturningAfterGapRule`, TIDAK diubah), `idle_category` dihitung
+        Companion lewat `categorize_continuity()` (v3.1, `ai/context_
+        builder.py`) yang SUDAH ADA — Initiative TIDAK mengimpor ulang/
+        menduplikasi kalkulator idle itu sendiri."""
         suppressed, suppression_reason = check_suppression(vision_context, is_voice_active, is_actively_typing)
 
         if suppressed:
@@ -54,6 +70,10 @@ class InitiativeEngine:
             hour=now.hour,
             relevant_memory_count=relevant_memory_count,
             conversation_closed=conversation_closed,
+            recent_unresolved=recent_unresolved,
+            recent_correction=recent_correction,
+            conversation_memory_count=conversation_memory_count,
+            anchor_present=anchor_present,
         )
 
         score = 0.0
@@ -72,6 +92,14 @@ class InitiativeEngine:
                 sign = "+" if weight >= 0 else ""
                 reasons.append(f"{reason} ({sign}{weight:.1f})")
 
-        result = decide(score, self.threshold, reasons)
+        result = decide(
+            score, self.threshold, reasons,
+            idle_category=idle_category,
+            recent_unresolved=recent_unresolved,
+            recent_closure=conversation_closed,
+            recent_correction=recent_correction,
+            anchor_present=anchor_present,
+            conversation_memory_count=conversation_memory_count,
+        )
         logger.info("Decision Score: {:.0f} / threshold {:.0f}", score, self.threshold)
         return result

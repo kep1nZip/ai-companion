@@ -52,10 +52,19 @@ class Initiative:
         is_actively_typing: bool = False,
         relevant_memory_count: int = 0,
         conversation_closed: bool = False,
+        idle_category: Optional[str] = None,
+        recent_unresolved: bool = False,
+        recent_correction: bool = False,
+        conversation_memory_count: int = 0,
+        anchor_present: bool = False,
     ) -> DecisionResult:
         """Hitung ulang decision. Cooldown & Budget dicek SEBAGAI HARD GATE
         (sama level dengan Suppression) SEBELUM scoring — Conversation Budget
-        (rekomendasi GPT #3) mencegah Arona terlalu sering 'minta' memulai obrolan."""
+        (rekomendasi GPT #3) mencegah Arona terlalu sering 'minta' memulai obrolan.
+
+        v3.8 Phase 1/2 — 5 parameter BARU, SEMUA opsional dengan default
+        backward-compat, sekadar diteruskan apa adanya ke `InitiativeEngine.
+        compute()` (lihat docstring di sana untuk detail reuse v3.3/v3.5/v3.7)."""
         now = self._now()
 
         if self._history.in_cooldown(now):
@@ -69,6 +78,11 @@ class Initiative:
                 behavior_state, vision_context, routine_event, is_voice_active, is_actively_typing,
                 relevant_memory_count=relevant_memory_count,
                 conversation_closed=conversation_closed,
+                idle_category=idle_category,
+                recent_unresolved=recent_unresolved,
+                recent_correction=recent_correction,
+                conversation_memory_count=conversation_memory_count,
+                anchor_present=anchor_present,
             )
 
         self._last_result = result

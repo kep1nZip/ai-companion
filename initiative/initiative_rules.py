@@ -29,7 +29,50 @@ class DecisionContext:
     # dari `Conversation.get_last_user_message()` lewat
     # `ai/conversation_signals.py::detect_closure()` (pattern matching murni,
     # TIDAK ADA LLM kedua). Default False = backward compat penuh.
+    #
+    # v3.8 Phase 2/4 (Context-Aware Initiative) catatan: SEJAK v3.8, nilai
+    # yang DIKIRIM Companion ke field ini SUDAH diupgrade untuk reuse
+    # `ConversationFeedback.closure_detected` (v3.7, superset dari
+    # `detect_closure()` v2.8 + pola tambahan "udah cukup" dst) kalau
+    # tersedia — TIDAK ADA perubahan di field/rule INI sendiri, cuma
+    # SUMBER datanya lebih kaya sekarang (lihat `Companion._build_contents`/
+    # `check_autonomous_opportunity`). Zero risk terhadap rule yang sudah
+    # stabil sejak v2.8.
     conversation_closed: bool = False
+    # v3.8 Phase 3 (Recent Unresolved Context) — True kalau pesan Teacher
+    # TERAKHIR mengandung unresolved cue (reuse `ai/temporal_signals.py::
+    # detect_unresolved_cues()` v3.5, via `Companion._last_temporal_signals`
+    # yang SUDAH dicache — TIDAK ADA deteksi baru/query baru). Default
+    # False = backward compat penuh.
+    recent_unresolved: bool = False
+    # v3.8 Phase 5 (Recent Correction Guard) — True kalau pesan Teacher
+    # TERAKHIR mengandung correction cue (reuse `ai/conversation_feedback.py::
+    # ConversationFeedback.correction_detected` v3.7, via `Companion.
+    # _last_conversation_feedback` yang SUDAH dicache). Default False =
+    # backward compat penuh.
+    recent_correction: bool = False
+    # v3.8 Phase 2/16 (Memory Relevance Guard) — jumlah memory relevan dari
+    # RECALL PERCAKAPAN TERAKHIR (reuse `Companion._recall_decision_history`
+    # v3.3/v3.4, field `result_count` dari entry PALING BARU — BUKAN query
+    # baru). SENGAJA field TERPISAH dari `relevant_memory_count` di atas
+    # (yang sumbernya Vision-triggered, v2.7, TIDAK diubah/digabung —
+    # dua sinyal dengan sumber & makna berbeda, menggabungkannya akan
+    # mengaburkan dari mana angka itu berasal). Default 0 = backward
+    # compat penuh.
+    conversation_memory_count: int = 0
+    # v3.8 Phase 2 (Conversation Anchor Reuse) — True kalau recall
+    # percakapan TERAKHIR berhasil lewat tier "conversation_anchor" ATAU
+    # "current_message" (v3.3, via `Companion._recall_decision_history`
+    # entry PALING BARU, field `query_source`) — ARTINYA ada topik baru-
+    # baru ini yang Arona bisa rujuk secara alami. MURNI INFORMASIONAL
+    # (pola IDENTIK field `hour` di atas, yang SUDAH ADA sejak awal dan
+    # SAMPAI SEKARANG tidak dikonsumsi rule mana pun) — TIDAK ada
+    # DecisionRule baru yang membaca field ini (spec v3.8 §25: "Jangan
+    # mengarang bobot baru tanpa justifikasi Phase 0 yang jelas" — sinyal
+    # anchor murni untuk observability Dashboard §19/§20, relevansinya ke
+    # skor SUDAH tercermin lewat `conversation_memory_count`/`recent_
+    # unresolved` di atas). Default False = backward compat penuh.
+    anchor_present: bool = False
 
 
 class DecisionRule:
@@ -313,6 +356,98 @@ class ReturningAfterGapRule(DecisionRule):
         return None
 
 
+class RecentUnresolvedRule(DecisionRule):
+    """v3.8 Phase 3 (Recent Unresolved Context).
+
+    Reuse TOTAL `ctx.recent_unresolved` (dihitung Companion dari `ai/
+    temporal_signals.py::detect_unresolved_cues()` v3.5 terhadap pesan
+    Teacher TERAKHIR, TIDAK ADA deteksi baru di sini). Rule ini murni
+    KONSUMEN boolean, pola IDENTIK `MemoryRelevanceRule`/
+    `ConversationClosureRule` (v2.7/v2.8) — Initiative TIDAK PERNAH
+    membaca isi pesan Teacher sendiri.
+
+    PENTING (spec §8/§11): ini BUKAN "ada unresolved -> Arona WAJIB
+    bicara" — cuma bonus skor KECIL, sama seperti rule lain yang baru
+    ditambahkan belakangan. Kombinasi dengan `RecentInteractionPenaltyRule`
+    (-20, aktif selama idle_seconds < 900) secara ALAMI mencegah bonus ini
+    memicu balasan duplikat tepat setelah Arona baru saja merespons isu
+    yang sama (spec §13 "Avoid Repeating Already-Handled Responses") —
+    bonus ini baru benar-benar berpengaruh SETELAH cukup waktu berlalu
+    (idle_seconds >= 900, giliran `IdleRule` aktif), persis skenario
+    "Teacher becomes idle" yang dimaksud spec §8, bukan duplikat instan.
+
+    Weight = +10.0 — magnitude PALING KECIL yang sudah dipakai rule lain
+    (pola sama seperti `MemoryRelevanceRule`/`ConversationClosureRule`/
+    `ReturningAfterGapRule`), BUKAN angka baru yang dikarang — sinyal baru
+    yang belum tervalidasi lewat pemakaian nyata, dimulai konservatif."""
+
+    def __init__(self, weight: float = 10.0):
+        super().__init__("recent_unresolved", weight)
+
+    def evaluate(self, ctx: DecisionContext) -> Optional[str]:
+        if ctx.recent_unresolved:
+            return "Ada isu yang belum terselesaikan dari pesan Teacher terakhir"
+        return None
+
+
+class RecentCorrectionRule(DecisionRule):
+    """v3.8 Phase 5 (Recent Correction Guard).
+
+    Reuse TOTAL `ctx.recent_correction` (dihitung Companion dari `ai/
+    conversation_feedback.py::ConversationFeedback.correction_detected`
+    v3.7 terhadap pesan Teacher TERAKHIR). Rule ini murni KONSUMEN
+    boolean — pola IDENTIK `ConversationClosureRule` (v2.8), SOFT PENALTY
+    (bukan hard suppression) supaya konsisten dengan keputusan arsitektur
+    yang SUDAH ADA untuk closure (spec §10: "temporary brake signal",
+    BUKAN `correction_state = unresolved` permanen).
+
+    Weight = -15.0 — SEDIKIT lebih kuat dari `ConversationClosureRule`
+    (-10.0), magnitude yang SUDAH dipakai `EnergyPenaltyRule`/
+    `RelationshipRule`/`InitiativeLevelRule` (15.0) di DEFAULT_RULES —
+    BUKAN angka baru yang dikarang. Lebih kuat dari closure karena
+    koreksi menyiratkan Arona SALAH memahami sesuatu yang masih aktif
+    dibahas — percakapan yang ada (bukan topik otonom baru yang tidak
+    terkait) seharusnya yang menangani itu dulu (spec §10)."""
+
+    def __init__(self, weight: float = -15.0):
+        super().__init__("recent_correction", weight)
+
+    def evaluate(self, ctx: DecisionContext) -> Optional[str]:
+        if ctx.recent_correction:
+            return "Teacher baru saja mengoreksi pemahaman Arona"
+        return None
+
+
+class ConversationAnchorMemoryRule(DecisionRule):
+    """v3.8 Phase 2/16 (Memory Relevance Guard, reuse v3.3/v3.4).
+
+    Reuse TOTAL `ctx.conversation_memory_count` (dihitung Companion dari
+    `_recall_decision_history` TERAKHIR — hasil `_select_relevant_
+    memories()` v3.3/v3.4 yang SUDAH dipanggil utk membangun balasan
+    chat() biasa, TIDAK ADA pencarian memory kedua). Pola IDENTIK
+    `MemoryRelevanceRule` (v2.7, yang membaca `relevant_memory_count`
+    bersumber Vision) — field TERPISAH karena SUMBER datanya beda (lihat
+    catatan `DecisionContext.conversation_memory_count` di atas).
+
+    Spec §16 eksplisit: "relevant_memory_count > 0 TIDAK BOLEH dianggap
+    cukup dengan sendirinya" — count di sini SUDAH melalui ranking v3.4
+    (kandidat lemah/generik sudah disaring SEBELUM count ini dihitung,
+    lihat `ai/memory_ranking.py`), jadi angka > 0 di sini SUDAH berarti
+    "ada memory yang BENAR-BENAR relevan", bukan sekadar hasil mentah.
+
+    Weight = +10.0 — magnitude SAMA PERSIS `MemoryRelevanceRule`, bukan
+    angka baru."""
+
+    def __init__(self, weight: float = 10.0, min_count: int = 1):
+        super().__init__("conversation_anchor_memory", weight)
+        self._min_count = min_count
+
+    def evaluate(self, ctx: DecisionContext) -> Optional[str]:
+        if ctx.conversation_memory_count >= self._min_count:
+            return f"Percakapan terakhir berkaitan dengan {ctx.conversation_memory_count} memori Teacher (ranking v3.4)"
+        return None
+
+
 DEFAULT_RULES: list[DecisionRule] = [
     IdleRule(),
     RecentInteractionPenaltyRule(),
@@ -325,6 +460,9 @@ DEFAULT_RULES: list[DecisionRule] = [
     MemoryRelevanceRule(),
     ConversationClosureRule(),
     ReturningAfterGapRule(),
+    RecentUnresolvedRule(),
+    RecentCorrectionRule(),
+    ConversationAnchorMemoryRule(),
 ]
 
 DEFAULT_THRESHOLD = 50.0

@@ -350,6 +350,7 @@ class Companion:
                     behavior_state, vision_context, routine_event,
                     relevant_memory_count=self._count_relevant_memories_for_vision(vision_context),
                     conversation_closed=self._detect_conversation_closure(),
+                    **self._initiative_evidence_kwargs(behavior_state),
                 ),
             )
             if self._initiative else None
@@ -449,6 +450,7 @@ class Companion:
                 is_voice_active=is_voice_active, is_actively_typing=is_actively_typing,
                 relevant_memory_count=self._count_relevant_memories_for_vision(vision_context),
                 conversation_closed=self._detect_conversation_closure(),
+                **self._initiative_evidence_kwargs(behavior_state),
             ),
         )
 
@@ -994,13 +996,80 @@ class Companion:
         titik (`chat()` maupun `check_autonomous_opportunity()`) — hasilnya
         SELALU sama untuk kedua jalur karena keduanya membaca pesan user
         TERAKHIR yang sama dari `Conversation` yang sama (Companion satu-
-        satunya orchestrator, Conversation satu-satunya source of truth)."""
+        satunya orchestrator, Conversation satu-satunya source of truth).
+
+        v3.8 Phase 2 (Context-Aware Initiative) UPGRADE: kalau `_last_
+        conversation_feedback` SUDAH tercache (v3.7, dihitung `_build_
+        contents()` untuk pesan Teacher yang SAMA), dipakai LANGSUNG
+        `closure_detected`-nya — itu SUPERSET dari `detect_closure()` murni
+        (base pattern v2.8 + pola tambahan "udah cukup" dst, lihat `ai/
+        conversation_feedback.py`), jadi TIDAK PERNAH kurang akurat dari
+        versi lama. `detect_closure()` v2.8 di bawah TETAP jadi FALLBACK
+        (bukan dihapus) untuk kondisi belum ada chat sama sekali/cache
+        kosong — fungsi ini tetap AMAN dipanggil kapan pun, persis
+        sebelumnya."""
+        if self._last_conversation_feedback is not None:
+            return self._last_conversation_feedback.closure_detected
         try:
             last_message = self._conversation.get_last_user_message()
             return detect_closure(last_message or "")
         except Exception as e:
             logger.warning("Gagal deteksi conversation closure: {}", e)
             return False
+
+    def _initiative_evidence_kwargs(self, behavior_state: BehaviorState) -> dict:
+        """v3.8 Phase 1/2 (Context-Aware Initiative & Proactive Support) —
+        SATU-SATUNYA tempat yang merangkai 5 evidence BARU untuk
+        `Initiative.update()`, dipanggil dari KEDUA titik (`chat()` &
+        `check_autonomous_opportunity()`) supaya tidak ada logic yang
+        diduplikasi. SEMUA field murni REUSE cache yang SUDAH dihitung
+        milestone sebelumnya untuk PESAN TEACHER TERAKHIR — TIDAK ADA
+        query memory baru, TIDAK ADA deteksi ulang, TIDAK ADA LLM kedua
+        (spec v3.8 §23 Performance Requirements):
+
+        - `idle_category`: reuse `categorize_continuity()` (v3.1) — MURNI
+          informasional untuk Dashboard (pola `hour` di `DecisionContext`,
+          sudah ada sejak awal, tidak dikonsumsi rule manapun); scoring
+          idle TETAP berbasis `idle_seconds` detik seperti sebelumnya,
+          TIDAK diganti.
+        - `recent_unresolved`: dari `_last_temporal_signals.unresolved_
+          cues` (v3.5) — non-empty berarti ADA.
+        - `recent_correction`: dari `_last_conversation_feedback.
+          correction_detected` (v3.7).
+        - `conversation_memory_count`: dari entry PALING BARU di
+          `_recall_decision_history` (`result_count`, v3.3/v3.4 — SUDAH
+          lewat ranking, bukan hasil mentah).
+        - `anchor_present`: True kalau tier recall PALING BARU adalah
+          "conversation_anchor" ATAU "current_message" (v3.3) — ada topik
+          yang baru-baru ini relevan/bisa dirujuk.
+
+        Semua field punya fallback AMAN (`None`/`False`/`0`) kalau belum
+        pernah ada chat/recall sama sekali (mis. aplikasi baru start) —
+        TIDAK PERNAH meledak, persis prinsip cache lain (`_last_temporal_
+        signals`, dst) yang sudah established sejak v3.5."""
+        idle_category = categorize_continuity(behavior_state.internal.elapsed_seconds())
+
+        recent_unresolved = bool(
+            self._last_temporal_signals and self._last_temporal_signals.unresolved_cues
+        )
+        recent_correction = bool(
+            self._last_conversation_feedback and self._last_conversation_feedback.correction_detected
+        )
+
+        conversation_memory_count = 0
+        anchor_present = False
+        if self._recall_decision_history:
+            last_recall = self._recall_decision_history[-1]
+            conversation_memory_count = last_recall.get("result_count", 0)
+            anchor_present = last_recall.get("query_source") in ("conversation_anchor", "current_message")
+
+        return {
+            "idle_category": idle_category,
+            "recent_unresolved": recent_unresolved,
+            "recent_correction": recent_correction,
+            "conversation_memory_count": conversation_memory_count,
+            "anchor_present": anchor_present,
+        }
 
     def _vision_query_text(self, vision_context: Optional[VisionContext]) -> str:
         """v3.0 Phase 7 (Autonomous Personalization) — diekstrak dari

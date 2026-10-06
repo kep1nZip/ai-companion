@@ -605,6 +605,16 @@ class DeveloperDashboard(QDialog):
             f"Cooldown Remaining: {_fmt(round(i.cooldown_remaining_seconds, 1) if i.cooldown_remaining_seconds is not None else None, ' s')}",
             f"Budget: {i.hourly_remaining}/hour, {i.daily_remaining}/day remaining",
             f"Reasons: {reasons}",
+            # v3.8 Phase 15/19/20 (Context-Aware Initiative) — DITAMBAHKAN ke
+            # card "Initiative" yang SUDAH ADA, bukan card baru. Murni echo
+            # evidence deterministik (reuse v3.1/v3.3/v3.5/v3.7), TIDAK ADA
+            # confidence/skor buatan.
+            f"Idle Category: {i.idle_category or 'unknown'}",
+            f"Recent Unresolved: {_yes_no(i.recent_unresolved)}",
+            f"Recent Closure: {_yes_no(i.recent_closure)}",
+            f"Recent Correction: {_yes_no(i.recent_correction)}",
+            f"Anchor Present: {_yes_no(i.anchor_present)}",
+            f"Conversation Memory Count: {i.conversation_memory_count}",
         ]
         self._set_card(self._initiative_card, "\n".join(lines))
 
