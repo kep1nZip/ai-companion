@@ -391,6 +391,13 @@ class DeveloperDashboard(QDialog):
             f"Context Assembly Latency: {assembly_ms:.1f} ms (avg)" if assembly_ms is not None else "Context Assembly Latency: belum ada data",
             f"Provider Generation Latency: {llm_ms:.1f} ms (avg)" if llm_ms is not None else "Provider Generation Latency: belum ada data",
         ]
+        # v3.9 Phase 1 — breakdown karakter per-section, DITAMBAHKAN ke card
+        # "Context" yang sudah ada (bukan card baru).
+        section_sizes = cd.get("section_sizes")
+        if section_sizes:
+            lines.append("Section Sizes (as of pesan terakhir):")
+            for name, chars in section_sizes.items():
+                lines.append(f"  {name}: {chars} chars")
         self._set_card(self._context_card, "\n".join(lines))
 
     def _render_personalization(self, snapshot: DeveloperSnapshot) -> None:

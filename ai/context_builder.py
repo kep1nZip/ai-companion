@@ -227,6 +227,45 @@ class ContextBuilder:
             lines.append(f"Sinyal belum tuntas: {', '.join(signals.unresolved_cues)}")
         return "\n".join(lines)
 
+    def measure_sections(
+        self,
+        behavior_state: BehaviorState,
+        vision_context: Optional[VisionContext] = None,
+        temporal_signals: Optional[TemporalSignals] = None,
+        response_calibration: Optional[ResponseCalibration] = None,
+    ) -> dict:
+        """v3.9 Phase 1 (Adaptive Context Budget & Attention Allocation) —
+        PURE measurement helper, NOL side effect, NOL capture Vision baru,
+        NOL deteksi ulang apa pun. Reuse LANGSUNG method `_format_*` yang
+        SUDAH ADA (satu-satunya tempat yang tahu persis bagaimana tiap
+        section dirender) — supaya angka yang dilaporkan selalu PERSIS
+        SAMA dengan apa yang benar-benar dikirim `build()`, tidak pernah
+        bisa diam-diam berbeda (dua tempat kode beda yang kebetulan harus
+        selalu sinkron adalah sumber bug klasik, di sini sengaja dihindari
+        dengan memanggil formatter yang SAMA).
+
+        Return dict `{nama_section: jumlah_karakter}` — section yang TIDAK
+        akan muncul (evidence kosong/`None`) dilaporkan `0`, BUKAN
+        dihilangkan dari dict (supaya pemanggil tidak perlu menduga-duga
+        key mana yang ada)."""
+        sizes = {
+            "time": len(self._format_time()),
+            "continuity": len(self._format_continuity(behavior_state)),
+            "emotion": len(self._format_emotion(behavior_state)),
+            "relationship": len(self._format_relationship(behavior_state)),
+            "internal": len(self._format_internal(behavior_state)),
+            "temporal": 0,
+            "calibration": 0,
+            "vision": 0,
+        }
+        if temporal_signals is not None and not temporal_signals.is_empty():
+            sizes["temporal"] = len(self._format_temporal(temporal_signals))
+        if response_calibration is not None and not response_calibration.is_empty():
+            sizes["calibration"] = len(self._format_response_calibration(response_calibration))
+        if vision_context is not None:
+            sizes["vision"] = len(self._format_vision(vision_context))
+        return sizes
+
     def build_feedback_section(self, feedback: ConversationFeedback) -> str:
         """v3.7 Phase 10/11/15 — BEDA dari section lain (`_format_temporal`/
         `_format_response_calibration`, dipanggil dari dalam `build()` dan

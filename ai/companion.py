@@ -272,6 +272,9 @@ class Companion:
         # v3.7 Phase 18 — cache read-only murni untuk Developer Dashboard,
         # pola IDENTIK `_last_response_calibration` di atas.
         self._last_conversation_feedback: Optional[ConversationFeedback] = None
+        # v3.9 Phase 1 — cache read-only murni untuk Developer Dashboard,
+        # pola IDENTIK cache lain di atas.
+        self._last_memory_context_text: str = ""
         self._MEMORY_HISTORY_LIMIT = 30
         # v2.2 §21 (Developer Diagnostics): simpan NAMA provider yang benar2
         # dipakai (bukan re-deteksi dari type() nanti) — murni string
@@ -564,15 +567,48 @@ class Companion:
             len(part.text or "") for content in capped_history for part in (content.parts or [])
         )
 
+        # v3.9 Phase 1 (Adaptive Context Budget & Attention Allocation) —
+        # SEBELUM v3.9, panggilan `build()` di sini TIDAK menyertakan
+        # `temporal_signals`/`response_calibration` sama sekali — artinya
+        # `ephemeral_context_characters` SELALU under-count sejak v3.5/v3.6
+        # dirilis (section Temporal Context & Response Calibration tidak
+        # pernah ikut terhitung di sini, walau keduanya SUNGGUHAN terkirim
+        # ke LLM di `_build_contents()`). Diperbaiki dengan reuse
+        # `measure_sections()` (`ai/context_builder.py`, BARU v3.9) +
+        # evidence yang SUDAH dicache dari turn TERAKHIR (`_last_temporal_
+        # signals`/`_last_response_calibration`, v3.5/v3.6 — TIDAK ada
+        # deteksi ulang apa pun di sini, murni baca cache).
         try:
-            ephemeral_context_characters = len(
-                self._context_builder.build(self.current_behavior_state(), vision_context=vision_context)
+            section_sizes = self._context_builder.measure_sections(
+                self.current_behavior_state(),
+                vision_context=vision_context,
+                temporal_signals=self._last_temporal_signals,
+                response_calibration=self._last_response_calibration,
             )
+            ephemeral_context_characters = sum(section_sizes.values())
         except Exception as e:
             logger.warning("Gagal hitung ukuran ephemeral context untuk debug snapshot: {}", e)
+            section_sizes = {}
             ephemeral_context_characters = None
 
-        estimated_total_characters = history_characters + (ephemeral_context_characters or 0)
+        # v3.9 Phase 1 — memory & feedback TIDAK dirangkai jadi satu lewat
+        # `ContextBuilder.build()` (lihat arsitektur `_build_contents()`:
+        # memory jadi `Content` terpisah, feedback lewat `build_feedback_
+        # section()` terpisah pula) — diukur TERPISAH di sini dari cache
+        # turn TERAKHIR yang relevan (`_last_memory_context_text` v3.9,
+        # `_last_conversation_feedback` v3.7). Label "as of pesan
+        # terakhir" (BUKAN estimasi generik) — kalau belum pernah ada chat
+        # sama sekali, keduanya nol (bukan error).
+        memory_context_characters = len(self._last_memory_context_text)
+        feedback_context_characters = len(
+            self._context_builder.build_feedback_section(self._last_conversation_feedback)
+            if self._last_conversation_feedback is not None else ""
+        )
+
+        estimated_total_characters = (
+            history_characters + ephemeral_context_characters + memory_context_characters
+            + feedback_context_characters
+        ) if ephemeral_context_characters is not None else None
 
         perf_snapshot = self._performance.snapshot() if self._performance is not None else {}
         context_assembly_metric = perf_snapshot.get("context_assembly")
@@ -587,6 +623,14 @@ class Companion:
             "history_filtered": history_available - recent_turns_used,
             "conversation_closed": self._detect_conversation_closure(),
             "history_characters": history_characters,
+            # v3.9 Phase 1 — breakdown per-section (karakter), SEMUA "as of
+            # pesan terakhir yang diproses" (0 kalau section itu memang
+            # tidak muncul untuk pesan itu, bukan berarti gagal diukur).
+            "section_sizes": {
+                **section_sizes,
+                "memory": memory_context_characters,
+                "feedback": feedback_context_characters,
+            },
             "ephemeral_context_characters": ephemeral_context_characters,
             "estimated_total_characters": estimated_total_characters,
             "estimated_context_tokens": round(estimated_total_characters / 4),
@@ -1236,6 +1280,14 @@ class Companion:
                 "memory_query", lambda: self._select_relevant_memories(user_input, vision_context)
             )
             memory_text = _format_memories(memories, now=datetime.now(timezone.utc))
+            # v3.9 Phase 1 (Adaptive Context Budget) — dicache MURNI untuk
+            # `get_context_debug_snapshot()` bisa melaporkan ukuran memory
+            # context yang SUNGGUHAN terkirim di turn TERAKHIR (sebelum
+            # v3.9, Dashboard eksplisit TIDAK melaporkan angka ini sama
+            # sekali karena belum ada cache — lihat catatan v2.9 di
+            # docstring method itu). TIDAK memengaruhi `contents` yang
+            # dikirim ke provider sama sekali, murni bookkeeping.
+            self._last_memory_context_text = memory_text
             if memory_text:
                 contents.append(
                     types.Content(
@@ -1253,6 +1305,7 @@ class Companion:
             # otomatis jatuh ke varian generik (bukan varian dengan daftar
             # kandidat).
             memories = []
+            self._last_memory_context_text = ""
 
         contents.extend(history)
 

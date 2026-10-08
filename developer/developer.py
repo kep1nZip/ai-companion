@@ -380,6 +380,16 @@ class DeveloperService:
             f"- Context Assembly Latency: {cd['context_assembly_latency_ms']:.1f} ms (avg)" if cd and cd.get('context_assembly_latency_ms') is not None else "- Context Assembly Latency: belum ada data (belum pernah chat sejak app dibuka)",
             f"- Provider Generation Latency: {cd['llm_latency_ms']:.1f} ms (avg)" if cd and cd.get('llm_latency_ms') is not None else "- Provider Generation Latency: belum ada data",
         ]
+        # v3.9 Phase 1 (Adaptive Context Budget & Attention Allocation) —
+        # breakdown KARAKTER per-section (as of pesan terakhir), SATU-
+        # SATUNYA cara jujur melihat section mana yang benar-benar
+        # mendominasi context — DITAMBAHKAN ke card "Context" yang sudah
+        # ada (bukan card baru).
+        section_sizes = cd.get("section_sizes") if cd else None
+        if section_sizes:
+            lines.append("- Section Sizes (karakter, as of pesan terakhir):")
+            for name, chars in section_sizes.items():
+                lines.append(f"    - {name}: {chars}")
 
         # v3.0 Phase 10 (Item F) — SEMUA field di bawah "sinyal yang
         # TERSEDIA", BUKAN "diterapkan" (§7 Audit v3.0: klaim "applied"
