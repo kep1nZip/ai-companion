@@ -106,10 +106,23 @@ def detect_depth_cues(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     berlaku untuk PESAN INI, pemanggil tidak menyimpannya sebagai
     preferensi permanen (itu tetap wewenang `MemoryExtractor` yang sudah
     ada, kalau memang messagenya eksplisit jangka panjang)."""
+    depth_cues, explicit_phrases, _spans = _scan_depth_cues(text)
+    return depth_cues, explicit_phrases
+
+
+def _scan_depth_cues(
+    text: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, tuple[int, int]]]:
+    """v3.10 — badan asli `detect_depth_cues()` (v3.6, logic TIDAK berubah)
+    dipindah ke sini supaya posisi (span) match tiap kategori ikut
+    dikembalikan — dibutuhkan `_resolve_self_correction()` di bawah untuk
+    tahu URUTAN cue dalam kalimat. `detect_depth_cues()` publik tetap
+    mengembalikan 2 nilai persis seperti sebelumnya (backward-compat)."""
     t = (text or "").lower()
     depth_cues: list[str] = []
     explicit_phrases: list[str] = []
     covered: list[tuple[int, int]] = []
+    cue_spans: dict[str, tuple[int, int]] = {}
 
     def check(patterns: list[str], category: str) -> bool:
         matched_any = False
@@ -122,6 +135,8 @@ def detect_depth_cues(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
                 continue
             covered.append(span)
             explicit_phrases.append(m.group(0))
+            if category not in cue_spans or span[0] < cue_spans[category][0]:
+                cue_spans[category] = span
             matched_any = True
         return matched_any
 
@@ -132,7 +147,38 @@ def detect_depth_cues(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if check(_CONCISE_PATTERNS, "concise"):
         depth_cues.append("concise")
 
-    return tuple(depth_cues), tuple(explicit_phrases)
+    return tuple(depth_cues), tuple(explicit_phrases), cue_spans
+
+
+# v3.10 — Self-correction dalam SATU pesan (spec v3.10 §4.4: "jelaskan
+# detail—eh, cukup ringkas saja" -> ikuti maksud akhir untuk turn ini).
+# SENGAJA sempit: marker koreksi EKSPLISIT harus ada di antara dua cue yang
+# bertentangan. Tanpa marker ("jelasin detail tapi singkat aja") tetap
+# dianggap bertentangan seperti v3.6 — BUKAN aturan "klausa terakhir selalu
+# menang" (spec §4.4 melarang aturan rapuh itu).
+_SELF_CORRECTION_MARKERS = re.compile(
+    r"(?:\beh\b|\bralat\b|\bkoreksi\b|\bmaksudku\b|\bmaksud\s+aku\b"
+    r"|\b(?:ga|gak|nggak|tidak)\s+jadi\b|\bmaaf\s+salah\b)"
+)
+
+
+def _resolve_self_correction(
+    text: str, cue_spans: dict[str, tuple[int, int]]
+) -> Optional[str]:
+    """Return kategori cue AKHIR ("concise"/"detailed") kalau ada marker
+    koreksi eksplisit di ANTARA cue concise dan detailed; selain itu None.
+    Pure/deterministic, tidak ada skor/confidence."""
+    if "concise" not in cue_spans or "detailed" not in cue_spans:
+        return None
+    c, d = cue_spans["concise"], cue_spans["detailed"]
+    if c[0] < d[0]:
+        first_end, last_start, last_cat = c[1], d[0], "detailed"
+    else:
+        first_end, last_start, last_cat = d[1], c[0], "concise"
+    between = (text or "").lower()[first_end:last_start]
+    if _SELF_CORRECTION_MARKERS.search(between):
+        return last_cat
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +279,10 @@ class ResponseCalibration:
     explicit_phrases: tuple[str, ...] = ()
     step_by_step_requested: bool = False
     conflicting_cues: bool = False
+    # v3.10: kategori maksud AKHIR ("concise"/"detailed") kalau Teacher
+    # mengoreksi dirinya sendiri secara eksplisit dalam pesan yang sama;
+    # None = tidak ada self-correction terdeteksi.
+    self_correction_final: Optional[str] = None
 
     def is_empty(self) -> bool:
         """True kalau TIDAK ADA evidence kalibrasi apa pun — dipakai
@@ -263,7 +313,7 @@ def build_response_calibration(
     statement yang bergantung pada sinyal reuse itu tidak akan
     terdeteksi lewat jalur itu — tapi `_PROBLEM_WORD_MARKERS` sendiri
     tetap independen jalan)."""
-    depth_cues, explicit_phrases = detect_depth_cues(text)
+    depth_cues, explicit_phrases, cue_spans = _scan_depth_cues(text)
     conversation_form = detect_conversation_form(
         text,
         reference_signal=reference_signal,
@@ -271,6 +321,10 @@ def build_response_calibration(
         completion_cues=completion_cues,
     )
     conflicting_cues = "concise" in depth_cues and "detailed" in depth_cues
+    # v3.10: self-correction eksplisit BUKAN konflik — maksud akhir jelas.
+    self_correction_final = _resolve_self_correction(text, cue_spans) if conflicting_cues else None
+    if self_correction_final:
+        conflicting_cues = False
 
     return ResponseCalibration(
         conversation_form=conversation_form,
@@ -278,4 +332,5 @@ def build_response_calibration(
         explicit_phrases=explicit_phrases,
         step_by_step_requested="step_by_step" in depth_cues,
         conflicting_cues=conflicting_cues,
+        self_correction_final=self_correction_final,
     )

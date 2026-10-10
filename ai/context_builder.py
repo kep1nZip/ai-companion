@@ -337,6 +337,14 @@ class ContextBuilder:
         if calibration.explicit_phrases:
             phrases = ", ".join(f'"{p}"' for p in calibration.explicit_phrases)
             lines.append(f"Teacher menyebutkan instruksi gaya jawaban secara eksplisit: {phrases}.")
+        if calibration.self_correction_final:
+            # v3.10: koreksi diri eksplisit dalam satu pesan -> maksud AKHIR
+            # Teacher untuk turn ini (observasi, bukan perintah kaku).
+            final_label = "ringkas" if calibration.self_correction_final == "concise" else "detail"
+            lines.append(
+                "Teacher mengoreksi permintaan gaya jawabannya di dalam pesan yang sama; "
+                f"maksud akhirnya untuk turn ini: jawaban {final_label}."
+            )
         if calibration.conflicting_cues:
             lines.append(
                 "Catatan: instruksi gaya jawaban di atas tampak saling bertentangan "

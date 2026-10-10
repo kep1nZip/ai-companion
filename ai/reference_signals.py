@@ -104,6 +104,9 @@ GENERIC_REFERENCE_STOPWORDS = frozenset({
     "kenapa", "banget", "tapi", "atau", "tetap", "tetapi", "juga", "sama",
     "cuma", "hanya", "emang", "memang", "soalnya", "makanya", "biar",
     "supaya", "kayanya", "sepertinya", "mungkin",
+    # v3.10: kata kerja balik-ke-topik & partikel — pembawa referensi,
+    # bukan pembeda topik ("balik ke X tadi dong").
+    "balik", "kembali", "dong", "donk",
 })
 
 

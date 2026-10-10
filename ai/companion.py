@@ -1509,7 +1509,10 @@ class Companion:
         winning_keywords, winning_raw_text = current_keywords, user_input
 
         if not outcome.memories and should_try_wider_context:
-            anchor_keywords = self._recent_conversation_anchor_keywords()
+            # v3.10: kata kunci pesan saat ini diteruskan supaya turn yang
+            # BENAR-BENAR disebut Teacher ("balik ke parser JSON tadi")
+            # didahulukan, bukan sekadar 3 turn terbaru (recency).
+            anchor_keywords = self._recent_conversation_anchor_keywords(target_keywords=current_keywords)
             outcome = self._search_memories_by_keywords(anchor_keywords)
             if outcome.memories:
                 matched_source = "conversation_anchor"
@@ -1674,7 +1677,9 @@ class Companion:
             keyword_frequency=keyword_frequency,
         )
 
-    def _recent_conversation_anchor_keywords(self, max_user_turns: int = 3, max_keywords: int = 8) -> list[str]:
+    def _recent_conversation_anchor_keywords(
+        self, max_user_turns: int = 3, max_keywords: int = 8, target_keywords: Optional[list[str]] = None
+    ) -> list[str]:
         """v3.3 Phase 1 (Conversation Anchor Detection) — TIDAK membuat
         anchor object/state baru yang dipersist di mana pun (Hard Boundary
         §2: "Conversation database baru" & "Persistent topic database"
@@ -1712,6 +1717,24 @@ class Companion:
             if content.role == "user" and content.parts and content.parts[0].text
         ]
         previous_user_messages = user_messages[1:1 + max_user_turns]
+
+        # v3.10 Phase 2 (Evidence Consistency) — reference eksplisit vs
+        # recency. Bug terreproduksi: "balik ke parser JSON yang tadi"
+        # (topik A hanya ada di riwayat, tanpa memory) setelah topik B/C
+        # menarik memory B/C lewat 3 turn terbaru, lalu note klarifikasi
+        # menyuruh Arona bertanya soal B/C padahal Teacher sudah menyebut A.
+        # Perbaikan: kalau kata kunci pesan saat ini (`target_keywords`,
+        # sudah lewat stopword filter) muncul di turn sebelumnya MANAPUN
+        # (full history, bukan cuma 3 terbaru), turn-turn itulah anchor-nya.
+        # Tidak ada turn yang cocok -> perilaku v3.3 TIDAK berubah.
+        if target_keywords:
+            target_set = set(target_keywords)
+            target_turns = [
+                text for text in user_messages[1:]
+                if target_set & set(filter_search_keywords(extract_keywords(text)))
+            ]
+            if target_turns:
+                previous_user_messages = target_turns[:max_user_turns]
 
         seen: set[str] = set()
         anchor_keywords: list[str] = []
