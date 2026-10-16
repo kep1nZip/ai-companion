@@ -50,6 +50,17 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "local").strip().lower()
 LOCAL_PROVIDER_BASE_URL = os.getenv("LOCAL_PROVIDER_BASE_URL", "http://localhost:1234/v1")
 LOCAL_PROVIDER_MODEL_NAME = os.getenv("LOCAL_PROVIDER_MODEL_NAME", "qwen3-vl-8b")
 
+# Batas jumlah token yang boleh di-generate Local untuk CHAT UTAMA. Sebelumnya
+# TIDAK ADA batas: saat model 8B jatuh ke loop pengulangan (log LM Studio
+# 2026-10-16: 2.629 token berulang), generasi jalan terus sampai timeout 120s
+# lalu aplikasi memutus koneksi -> "Local model server tidak merespons".
+# 1024 token ~ 40 detik di ~25 t/s, aman di bawah timeout. Atur lewat .env;
+# 0 = tanpa batas (perilaku lama). Nilai tak valid -> default.
+try:
+    LOCAL_PROVIDER_MAX_TOKENS = int(os.getenv("LOCAL_PROVIDER_MAX_TOKENS", "1024"))
+except ValueError:
+    LOCAL_PROVIDER_MAX_TOKENS = 1024
+
 # v2.2 — Local Memory Extraction: provider Memory Extraction adalah KEPUTUSAN
 # TERPISAH dari AI_PROVIDER (§27: "Language Provider = Local" TIDAK otomatis
 # berarti "Memory Provider = Local"). Default TETAP "gemini" (BUKAN ikut

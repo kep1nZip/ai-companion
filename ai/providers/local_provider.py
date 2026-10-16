@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import requests
 
 from google.genai import types
@@ -49,6 +51,7 @@ class LocalProvider(LanguageModelProvider):
         temperature: float = 0.85,
         frequency_penalty: float = 0.4,
         presence_penalty: float = 0.4,
+        max_tokens: Optional[int] = None,
     ):
         self._system_prompt = system_prompt
         self._model_name = model_name
@@ -88,6 +91,9 @@ class LocalProvider(LanguageModelProvider):
         self._temperature = temperature
         self._frequency_penalty = frequency_penalty
         self._presence_penalty = presence_penalty
+        # None/<=0 = tidak kirim max_tokens (perilaku lama). Mencegah loop
+        # pengulangan model berjalan sampai timeout.
+        self._max_tokens = max_tokens if (max_tokens and max_tokens > 0) else None
 
     def generate(self, contents: list[types.Content]) -> str:
         # Terjemahkan list[types.Content] (format Gemini SDK, role "user"/
@@ -108,6 +114,8 @@ class LocalProvider(LanguageModelProvider):
             "frequency_penalty": self._frequency_penalty,
             "presence_penalty": self._presence_penalty,
         }
+        if self._max_tokens is not None:
+            payload["max_tokens"] = self._max_tokens
 
         try:
             response = requests.post(

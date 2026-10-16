@@ -12,6 +12,7 @@ from config.settings import (
     MEMORY_PROVIDER,
     LOCAL_PROVIDER_BASE_URL,
     LOCAL_PROVIDER_MODEL_NAME,
+    LOCAL_PROVIDER_MAX_TOKENS,
 )
 from config.constants import MODEL_NAME
 from config.logger import logger
@@ -58,6 +59,7 @@ def build_language_provider() -> Tuple[Optional[LanguageModelProvider], str]:
             system_prompt=system_prompt,
             model_name=LOCAL_PROVIDER_MODEL_NAME,
             base_url=LOCAL_PROVIDER_BASE_URL,
+            max_tokens=LOCAL_PROVIDER_MAX_TOKENS,
         )
         logger.info("AI Provider: LOCAL ({} @ {})", LOCAL_PROVIDER_MODEL_NAME, LOCAL_PROVIDER_BASE_URL)
         return provider, LOCAL_PROVIDER_MODEL_NAME
