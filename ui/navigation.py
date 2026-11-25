@@ -13,17 +13,21 @@ class Sidebar(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("sidebar")
-        self.setFixedWidth(170)
+        self.setFixedWidth(184)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 16, 10, 16)
-        layout.setSpacing(4)
+        layout.setSpacing(3)
         layout.setAlignment(Qt.AlignTop)
 
         title = QLabel("ARONA")
         title.setObjectName("sidebarTitle")
         layout.addWidget(title)
-        layout.addSpacing(12)
+
+        subtitle = QLabel("AI Companion")
+        subtitle.setObjectName("sidebarSubtitle")
+        layout.addWidget(subtitle)
+        layout.addSpacing(14)
 
         self._chat_button = self._make_item("Chat", active=True)
         self._memory_button = self._make_item("Memory")

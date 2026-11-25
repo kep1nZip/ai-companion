@@ -79,8 +79,13 @@ class ChatBubble(QFrame):
         label.setObjectName("bubbleLabel")
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
+        # Lebar bubble mengikuti panjang teks (maks 460px) — tanpa ini QLabel
+        # word-wrap menyempit jadi kolom sempit.
+        text_width = max(label.fontMetrics().horizontalAdvance(line) for line in text.split("\n") or [""])
+        label.setMinimumWidth(min(text_width + 8, 460))
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(14, 10, 14, 10)
         layout.addWidget(label)
 
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
@@ -97,6 +102,7 @@ class ChatArea(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self._container = QWidget()
+        self._container.setObjectName("chatContainer")
         self._layout = QVBoxLayout(self._container)
         self._layout.setAlignment(Qt.AlignTop)
         self._layout.setSpacing(10)

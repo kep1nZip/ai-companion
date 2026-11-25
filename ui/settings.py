@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QComboBox,
+    QScrollArea,
+    QFrame,
 )
 
 from ui.settings_service import SettingsService, SettingsSaveError
@@ -74,9 +76,25 @@ class SettingsPage(QWidget):
         self._memory_provider_dirty = False  # v2.2: dipisah dari _provider_dirty (Language Provider)
         self._vision_provider_dirty = False  # v2.3: dipisah lagi, keputusan independen
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(14)
+        # Polish: isi Settings (banyak baris) ditaruh di dalam QScrollArea supaya
+        # TIDAK kepotong/terperas waktu window kecil, sementara footer
+        # Apply/Cancel tetap menempel di bawah (selalu terlihat).
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 12, 16)
+        outer.setSpacing(10)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("pageScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName("pageScrollBody")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 12, 0)
+        layout.setSpacing(10)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, stretch=1)
 
         title = QLabel("Settings")
         title.setObjectName("settingsPageTitle")
@@ -214,7 +232,11 @@ class SettingsPage(QWidget):
         self._apply_button.setEnabled(False)
         footer.addWidget(self._apply_button)
 
-        layout.addLayout(footer)
+        outer.addLayout(footer)
+
+        # Polish: samakan lebar kolom label supaya semua input/combo sejajar.
+        for label in body.findChildren(QLabel, "settingsFieldLabel"):
+            label.setMinimumWidth(200)
 
         self._load_snapshot()
 

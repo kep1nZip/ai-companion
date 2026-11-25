@@ -4,7 +4,7 @@ import sys
 from pathlib import Path  # <-- Tambahan Import
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -24,6 +24,8 @@ from ui.voice_worker import VoiceWorker
 from ui.speak_worker import SpeakWorker
 from ui.avatar_worker import AvatarWorker  # <-- Tambahan Import Avatar
 from ui.navigation import Sidebar
+from ui.page_scroll import make_scrollable
+from ui.theme import PALETTE
 from ui.memory_service import MemoryService  # <-- v1.1
 from ui.memory import MemoryPage  # <-- v1.1
 from ui.voice import VoicePage  # <-- v1.2
@@ -105,14 +107,23 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(900, 600)
         self.resize(1000, 700)
+        icon_path = Path(__file__).resolve().parent.parent / "assets" / "avatar" / "icon-arona.jpg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        self._title_bar_styled = False
 
         self._build_menu_bar()
         self._build_central_widget()
 
         self.statusBar().showMessage("Ready")
+        # Size grip default Qt menimpa/memotong widget paling kanan di status
+        # bar (label "Avatar: ..." kelihatan terpotong) — window tetap bisa
+        # di-resize lewat tepinya.
+        self.statusBar().setSizeGripEnabled(False)
 
-        self._avatar_status_label = QLabel("Avatar: Disconnected")
+        self._avatar_status_label = QLabel()
         self.statusBar().addPermanentWidget(self._avatar_status_label)
+        self._apply_avatar_status("Disconnected")
 
         logger.info("Window opened.")
 
@@ -189,13 +200,21 @@ class MainWindow(QMainWindow):
         # RoutineEngine/RoutineScheduler kedua, TIDAK ada instance Routine baru.
         self._routine_page = RoutinePage(self._companion)
 
-        self._pages.addWidget(self._chat_page)
-        self._pages.addWidget(self._memory_page)
-        self._pages.addWidget(self._voice_page)
-        self._pages.addWidget(self._avatar_page)
-        self._pages.addWidget(self._settings_page)
-        self._pages.addWidget(self._vision_page)
-        self._pages.addWidget(self._routine_page)
+        # Polish: halaman yang bisa lebih tinggi dari window dibungkus scroll
+        # area (lihat ui/page_scroll.py) supaya tidak kepotong waktu window
+        # kecil. Settings punya scroll area + footer sendiri (lihat
+        # ui/settings.py). Chat & Memory sudah punya scroll sendiri.
+        self._page_widgets = {
+            "chat": self._chat_page,
+            "memory": self._memory_page,
+            "voice": make_scrollable(self._voice_page),
+            "avatar": make_scrollable(self._avatar_page),
+            "settings": self._settings_page,
+            "vision": make_scrollable(self._vision_page),
+            "routine": make_scrollable(self._routine_page),
+        }
+        for page_widget in self._page_widgets.values():
+            self._pages.addWidget(page_widget)
 
         root_layout.addWidget(self._pages, stretch=1)
 
@@ -230,18 +249,23 @@ class MainWindow(QMainWindow):
         input_row = QWidget()
         input_row.setObjectName("inputRow")
         input_layout = QHBoxLayout(input_row)
-        input_layout.setContentsMargins(12, 12, 12, 12)
-        input_layout.setSpacing(8)
+        input_layout.setContentsMargins(16, 12, 16, 12)
+        input_layout.setSpacing(10)
 
         self._input_box = QLineEdit()
         self._input_box.setPlaceholderText("Ketik pesan atau perintah (/help)...")
         self._input_box.returnPressed.connect(self._handle_send)
 
         self._mic_button = QPushButton("🎤")
-        self._mic_button.setFixedWidth(44)
+        self._mic_button.setObjectName("micButton")
+        self._mic_button.setFixedWidth(46)
+        self._mic_button.setCursor(Qt.PointingHandCursor)
+        self._mic_button.setToolTip("Rekam suara")
         self._mic_button.clicked.connect(self._handle_mic_click)
 
         self._send_button = QPushButton("Send")
+        self._send_button.setMinimumWidth(84)
+        self._send_button.setCursor(Qt.PointingHandCursor)
         self._send_button.clicked.connect(self._handle_send)
 
         input_layout.addWidget(self._input_box, stretch=1)
@@ -255,20 +279,9 @@ class MainWindow(QMainWindow):
     # ---------- Navigation (v1.1) ----------
 
     def _on_navigate(self, page_name: str) -> None:
-        if page_name == "chat":
-            self._pages.setCurrentWidget(self._chat_page)
-        elif page_name == "memory":
-            self._pages.setCurrentWidget(self._memory_page)
-        elif page_name == "voice":
-            self._pages.setCurrentWidget(self._voice_page)
-        elif page_name == "avatar":
-            self._pages.setCurrentWidget(self._avatar_page)
-        elif page_name == "settings":
-            self._pages.setCurrentWidget(self._settings_page)
-        elif page_name == "vision":
-            self._pages.setCurrentWidget(self._vision_page)
-        elif page_name == "routine":
-            self._pages.setCurrentWidget(self._routine_page)
+        widget = self._page_widgets.get(page_name)
+        if widget is not None:
+            self._pages.setCurrentWidget(widget)
 
     # ---------- Text Chat Actions ----------
 
@@ -384,7 +397,7 @@ class MainWindow(QMainWindow):
     def _handle_mic_click(self) -> None:
         if self._voice_manager.state == VoiceState.IDLE:
             self._voice_manager.start_recording()
-            self._mic_button.setText("⏹")
+            self._set_mic_recording(True)
             self.statusBar().showMessage(VoiceState.RECORDING.value)
             logger.info("Recording started from GUI.")
             return
@@ -418,15 +431,75 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Error", 3000)
         self._reset_voice_ui()
 
+    def _set_mic_recording(self, recording: bool) -> None:
+        self._mic_button.setText("⏹" if recording else "🎤")
+        self._mic_button.setToolTip("Berhenti merekam" if recording else "Rekam suara")
+        self._mic_button.setObjectName("micButtonRecording" if recording else "micButton")
+        self._mic_button.style().unpolish(self._mic_button)
+        self._mic_button.style().polish(self._mic_button)
+
     def _reset_voice_ui(self) -> None:
-        self._mic_button.setText("🎤")
+        self._set_mic_recording(False)
         self._mic_button.setEnabled(True)
         self._set_text_input_enabled(True)
 
     # ---------- Avatar Handlers ----------
 
     def _on_avatar_state_changed(self, state_text: str) -> None:  # <-- Handler baru
-        self._avatar_status_label.setText(f"Avatar: {state_text}")
+        self._apply_avatar_status(state_text)
+
+    def _apply_avatar_status(self, state_text: str) -> None:
+        """Label status avatar di status bar, diberi warna sesuai state
+        (hijau = siap, kuning = sedang menyambung, redup = terputus)."""
+        kind = {
+            "Ready": "statusPillOk",
+            "Busy": "statusPillOk",
+            "Authenticated": "statusPillWarn",
+            "Connecting": "statusPillWarn",
+        }.get(state_text, "statusPillBad")
+        self._avatar_status_label.setText(f"●  Avatar: {state_text}")
+        self._avatar_status_label.setObjectName(kind)
+        self._avatar_status_label.style().unpolish(self._avatar_status_label)
+        self._avatar_status_label.style().polish(self._avatar_status_label)
+
+    # ---------- Native title bar (Windows) ----------
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._title_bar_styled:
+            self._title_bar_styled = True
+            self._apply_windows_title_bar()
+
+    def _apply_windows_title_bar(self) -> None:
+        """Title bar bawaan Windows default-nya PUTIH (kontras jelek dengan
+        tema gelap). Pakai DWM API supaya title bar ikut warna palet Arona.
+        Murni kosmetik: platform lain / Windows lama diam-diam dilewati."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            def colorref(hex_color: str) -> int:
+                r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+                return (b << 16) | (g << 8) | r  # COLORREF = 0x00BBGGRR
+
+            hwnd = int(self.winId())
+            dwm = ctypes.windll.dwmapi
+
+            def set_attr(attr: int, value: int) -> None:
+                data = ctypes.c_int(value)
+                dwm.DwmSetWindowAttribute(
+                    wintypes.HWND(hwnd), ctypes.c_uint(attr), ctypes.byref(data), ctypes.sizeof(data)
+                )
+
+            set_attr(20, 1)  # DWMWA_USE_IMMERSIVE_DARK_MODE (Win10 2004+ / Win11)
+            set_attr(19, 1)  # versi lama atribut yang sama (Win10 1809-1903)
+            set_attr(35, colorref(PALETTE["BG_DEEP"]))  # DWMWA_CAPTION_COLOR (Win11)
+            set_attr(36, colorref(PALETTE["WHITE"]))  # DWMWA_TEXT_COLOR (Win11)
+            set_attr(34, colorref(PALETTE["BORDER"]))  # DWMWA_BORDER_COLOR (Win11)
+        except Exception as e:  # noqa: BLE001 — kosmetik, jangan sampai bikin app gagal start
+            logger.debug("Title bar styling dilewati: {}", e)
 
     # ---------- Dialogs ----------
 
